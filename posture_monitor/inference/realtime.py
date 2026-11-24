@@ -160,7 +160,7 @@ def _render_preview(frame_bgr, text, color, keypoints=None):
     annotated = frame_bgr.copy()
     if keypoints is not None:
         _draw_skeleton(annotated, keypoints)
-    cv2.putText(annotated, text, (10, 45), cv2.FONT_HERSHEY_SIMPLEX, 1.3, color, 3)
+    cv2.putText(annotated, text, (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 2.2, color, 5)
     cv2.imshow(PREVIEW_WINDOW_NAME, annotated)
     key = cv2.waitKey(1) & 0xFF
     return key in (ord("q"), 27)
