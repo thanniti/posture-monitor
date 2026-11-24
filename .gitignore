@@ -4,3 +4,6 @@ __pycache__/
 *.pyc
 .venv/
 .worktrees/
+assets/
+posture_monitor/models/*.joblib
+.pytest_cache/
