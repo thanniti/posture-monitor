@@ -108,6 +108,16 @@ def _status_text_and_color(keypoints_detected, calibrating, remaining_calibratio
     return text, color
 
 
+def _guided_calibration_text(expected_mode, matches, remaining_seconds):
+    """Pure decision logic for the guided two-phase calibration overlay: if the
+    user isn't currently detected in the orientation this phase expects, prompt
+    them to turn (and the countdown pauses — the caller simply doesn't advance
+    remaining_seconds in that case). Otherwise shows the countdown."""
+    if not matches:
+        return f"Please turn to {expected_mode.upper()} view to calibrate", (0, 165, 255)
+    return f"Calibrating {expected_mode.capitalize()} view... {remaining_seconds:.0f}s", (255, 255, 0)
+
+
 def _infer_orientation(ratio, current_mode):
     """Hysteresis-based orientation detection from the shoulder-span/torso-length
     ratio: below SIDE_VIEW_RATIO_THRESHOLD means profile/side view, above
@@ -246,29 +256,26 @@ def run_front_view(frame_source, on_flag=print, show_preview=False):
 
 
 def run(frame_source, model_bundle_path, on_flag=print, show_preview=False):
-    """Automatically detects per-frame whether the subject is in side view or
-    front view (see _infer_orientation) and routes to the appropriate
-    classifier, with no manual mode selection needed. Each orientation's
-    calibration (scale_reference for side, baseline for front) completes
-    independently based on that orientation's OWN accumulated exposure time —
-    a user who only ever shows one orientation calibrates and starts
-    classifying normally in ~30s, never blocked waiting on the other
-    orientation's data. If the mode later switches to an orientation that
-    hasn't calibrated yet, that orientation starts (or resumes) its own
-    calibration countdown while the other orientation's established
-    calibration is left untouched."""
+    """Guided two-phase calibration (always side view first, then front view,
+    15 seconds each), followed by automatic per-frame orientation detection
+    for live classification (see _infer_orientation). Each calibration phase's
+    countdown only advances while the user is actually detected in that
+    phase's expected orientation -- otherwise it pauses and the preview
+    prompts them to turn, rather than silently calibrating from the wrong
+    orientation's data or getting stuck forever with no explanation."""
     bundle = joblib.load(model_bundle_path)
     model = bundle["model"]
     landmarker = create_landmarker(POSE_MODEL_PATH)
     state = PostureMonitorState(SMOOTHING_WINDOW_SECONDS, DEBOUNCE_SECONDS)
 
-    side_calibration_rows = []
-    front_calibration_rows = []
-    side_calibration_start = None
-    front_calibration_start = None
     scale_reference = None
     baseline = None
     current_mode = "side"
+
+    side_calibration_rows = []
+    front_calibration_rows = []
+    phase_elapsed = 0.0
+    last_timestamp = None
 
     try:
         for timestamp, frame_bgr in frame_source:
@@ -277,6 +284,7 @@ def run(frame_source, model_bundle_path, on_flag=print, show_preview=False):
             keypoints = extract_keypoints(landmarker, mp_image)
 
             if keypoints is None:
+                last_timestamp = timestamp
                 if show_preview:
                     text, color = _status_text_and_color(False, False, 0, None)
                     if _render_preview(frame_bgr, text, color):
@@ -285,43 +293,50 @@ def run(frame_source, model_bundle_path, on_flag=print, show_preview=False):
 
             raw_side = extract_features(keypoints)
             raw_front = extract_frontal_features(keypoints)
-
-            orientation_ratio = (
+            ratio = (
                 raw_side["shoulder_span_px"] / raw_side["torso_length_px"]
                 if raw_side["torso_length_px"] > 0 else 0.0
             )
-            current_mode = _infer_orientation(orientation_ratio, current_mode)
 
-            if current_mode == "side" and scale_reference is None:
-                if side_calibration_start is None:
-                    side_calibration_start = timestamp
-                if raw_side["mean_visibility"] >= MIN_MEAN_VISIBILITY:
-                    side_calibration_rows.append(raw_side)
-                remaining = max(0.0, CALIBRATION_SECONDS - (timestamp - side_calibration_start))
+            delta = (timestamp - last_timestamp) if last_timestamp is not None else 0.0
+            last_timestamp = timestamp
+
+            if scale_reference is None:
+                matches = ratio < SIDE_VIEW_RATIO_THRESHOLD
+                if matches:
+                    phase_elapsed += delta
+                    if raw_side["mean_visibility"] >= MIN_MEAN_VISIBILITY:
+                        side_calibration_rows.append(raw_side)
+                remaining = max(0.0, CALIBRATION_SECONDS - phase_elapsed)
                 if show_preview:
-                    text, color = _status_text_and_color(True, True, remaining, None)
+                    text, color = _guided_calibration_text("side", matches, remaining)
                     if _render_preview(frame_bgr, text, color, keypoints):
                         break
-                if timestamp - side_calibration_start >= CALIBRATION_SECONDS and side_calibration_rows:
+                if phase_elapsed >= CALIBRATION_SECONDS and side_calibration_rows:
                     scale_reference = compute_scale_reference(side_calibration_rows)
+                    phase_elapsed = 0.0
                 continue
 
-            if current_mode == "front" and baseline is None:
-                if front_calibration_start is None:
-                    front_calibration_start = timestamp
-                if (
-                    raw_front["mean_visibility"] >= MIN_MEAN_VISIBILITY
-                    and raw_front["shoulder_width_px"] >= MIN_SHOULDER_WIDTH_PX
-                ):
-                    front_calibration_rows.append(raw_front)
-                remaining = max(0.0, CALIBRATION_SECONDS - (timestamp - front_calibration_start))
+            if baseline is None:
+                matches = ratio > FRONT_VIEW_RATIO_THRESHOLD
+                if matches:
+                    phase_elapsed += delta
+                    if (
+                        raw_front["mean_visibility"] >= MIN_MEAN_VISIBILITY
+                        and raw_front["shoulder_width_px"] >= MIN_SHOULDER_WIDTH_PX
+                    ):
+                        front_calibration_rows.append(raw_front)
+                remaining = max(0.0, CALIBRATION_SECONDS - phase_elapsed)
                 if show_preview:
-                    text, color = _status_text_and_color(True, True, remaining, None)
+                    text, color = _guided_calibration_text("front", matches, remaining)
                     if _render_preview(frame_bgr, text, color, keypoints):
                         break
-                if timestamp - front_calibration_start >= CALIBRATION_SECONDS and front_calibration_rows:
+                if phase_elapsed >= CALIBRATION_SECONDS and front_calibration_rows:
                     baseline = compute_frontal_baseline(front_calibration_rows)
+                    phase_elapsed = 0.0
                 continue
+
+            current_mode = _infer_orientation(ratio, current_mode)
 
             if current_mode == "side":
                 label = _classify_side_frame(raw_side, model, scale_reference)

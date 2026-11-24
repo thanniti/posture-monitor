@@ -9,6 +9,7 @@ from posture_monitor.inference.realtime import _draw_skeleton
 from posture_monitor.inference.realtime import _apply_angle_tolerance
 from posture_monitor.inference.realtime import _suppress_leg_twisting
 from posture_monitor.inference.realtime import _infer_orientation, run
+from posture_monitor.inference.realtime import _guided_calibration_text
 
 
 def _train_tiny_always_correct_model(tmp_path):
@@ -179,36 +180,50 @@ def test_infer_orientation_ambiguous_zone_keeps_current_mode():
     assert _infer_orientation(0.3, current_mode="front") == "front"
 
 
-def test_run_unified_locks_to_side_mode_and_emits_no_flags_for_correct_sitting(tmp_path):
-    # data/train/CorrectSitting/image_0.jpg measures shoulder_span/torso_length
-    # ratio ~0.3375 -- inside the ambiguous hysteresis band, not clearly below
-    # SIDE_VIEW_RATIO_THRESHOLD. So this test verifies the hysteresis default
-    # (current_mode starts as "side" and an ambiguous ratio keeps it there),
-    # not that the image is unambiguously classified as side view on its own.
-    import joblib
-    from sklearn.ensemble import RandomForestClassifier
-
-    model = RandomForestClassifier(n_estimators=5, random_state=0)
-    X = [[0, 0, 0.1, 0.9, 175, 0.95, 0.4, 0.95]] * 4
-    y = ["CorrectSitting"] * 4
-    model.fit(X, y)
-    model_path = tmp_path / "model.joblib"
-    joblib.dump({"model": model, "scale_reference": 100.0, "feature_order": None}, model_path)
-
-    flags = []
-    run(_fake_frame_source(35), str(model_path), on_flag=lambda ts, label: flags.append((ts, label)))
-
-    assert flags == []
+def test_guided_calibration_text_prompts_when_not_matching():
+    text, color = _guided_calibration_text("side", matches=False, remaining_seconds=10.0)
+    assert text == "Please turn to SIDE view to calibrate"
+    assert color == (0, 165, 255)
 
 
-def test_run_unified_completes_side_only_calibration_and_classifies(tmp_path):
-    # Regression test: a session that only ever shows side view (no front-view
-    # exposure at all) must still complete calibration and begin classifying —
-    # NOT get stuck waiting forever for front-view calibration data that will
-    # never arrive. Uses a model that always predicts "LeanForward" (not
+def test_guided_calibration_text_shows_countdown_when_matching():
+    text, color = _guided_calibration_text("front", matches=True, remaining_seconds=7.0)
+    assert text == "Calibrating Front view... 7s"
+    assert color == (255, 255, 0)
+
+
+def _alternating_fake_frame_source(side_frames, front_frames, extra_frames, step_seconds=1.0):
+    # data/train/CorrectSitting/image_9.jpg measures shoulder_span/torso_length
+    # ratio ~0.004 -- clearly SIDE (well below SIDE_VIEW_RATIO_THRESHOLD).
+    # data/train/LegTwisting/image_72.jpg measures ratio ~1.007 -- clearly
+    # exceeds FRONT_VIEW_RATIO_THRESHOLD (it's a side-view-labeled training
+    # image where the subject was rotated toward the camera, not a genuine
+    # frontal capture, but it reliably triggers the "front" orientation
+    # detection threshold, which is all this test needs).
+    side_image = cv2.imread("data/train/CorrectSitting/image_9.jpg")
+    front_image = cv2.imread("data/train/LegTwisting/image_72.jpg")
+    timestamp = 0.0
+    for _ in range(side_frames):
+        yield timestamp, side_image
+        timestamp += step_seconds
+    for _ in range(front_frames):
+        yield timestamp, front_image
+        timestamp += step_seconds
+    for _ in range(extra_frames):
+        yield timestamp, side_image
+        timestamp += step_seconds
+
+
+def test_run_guided_calibration_completes_both_phases_then_classifies(tmp_path):
+    # Regression test for the guided two-phase flow: feeds enough clearly-side
+    # frames to complete the side phase (CALIBRATION_SECONDS=15, so 17 frames
+    # at 1s/frame gives margin), then enough clearly-front-ish frames to
+    # complete the front phase, then returns to side frames for live
+    # classification. Uses a model that always predicts "LeanForward" (not
     # CorrectSitting) so that flags being emitted proves classification
-    # actually started, unlike a CorrectSitting-always model which would
-    # trivially emit zero flags whether or not calibration ever completed.
+    # actually started after BOTH phases completed -- an always-CorrectSitting
+    # model would trivially emit zero flags whether or not calibration ever
+    # finished, which would make this a weak/vacuous test.
     import joblib
     from sklearn.ensemble import RandomForestClassifier
 
@@ -220,6 +235,10 @@ def test_run_unified_completes_side_only_calibration_and_classifies(tmp_path):
     joblib.dump({"model": model, "scale_reference": 100.0, "feature_order": None}, model_path)
 
     flags = []
-    run(_fake_frame_source(40), str(model_path), on_flag=lambda ts, label: flags.append((ts, label)))
+    run(
+        _alternating_fake_frame_source(side_frames=17, front_frames=17, extra_frames=10),
+        str(model_path),
+        on_flag=lambda ts, label: flags.append((ts, label)),
+    )
 
     assert len(flags) > 0
