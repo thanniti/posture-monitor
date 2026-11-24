@@ -20,10 +20,21 @@ DEBOUNCE_SECONDS = 5.0
 # tight. Real per-frame pose-estimation output has substantial frame-to-frame jitter
 # (median consecutive-frame angle distance was ~14-30 degrees depending on class), so
 # a 2.0-degree threshold dropped almost nothing (e.g. CorrectSitting only went from
-# 649 -> 623 raw frames). Raised to 65.0, which collapses each class's near-duplicate
+# 649 -> 623 raw frames). Raised to 65.0, which collapsed each class's near-duplicate
 # frames by roughly 80-91% while still leaving enough distinct rows per class for a
 # meaningful honest train/test split.
-DEDUP_ANGLE_DISTANCE_THRESHOLD = 65.0
+#
+# Re-tuned after the facing-direction sign canonicalization fix (see
+# extraction.py's _facing_sign): correcting the angle sign removed a source of
+# large spurious frame-to-frame jumps (sign flips mid-clip), so genuine
+# frame-to-frame jitter is now lower (median consecutive-frame distance ~7-16
+# degrees instead of ~14-30). At the old 65.0 threshold this collapsed far more
+# aggressively than before (e.g. CorrectSitting 649 -> 26 total, only 6 in the
+# test split -- too thin for a meaningful honest evaluation). Lowered to 30.0,
+# which reproduces a similar ~72-87% per-class collapse rate to the original
+# tuning while leaving a healthier number of rows per class (83-247) for the
+# honest train/test split.
+DEDUP_ANGLE_DISTANCE_THRESHOLD = 30.0
 
 # Fraction of each class's chronologically-sorted frames used for the honest
 # re-split's training portion (remainder becomes the held-out test portion).
