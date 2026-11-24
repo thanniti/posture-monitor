@@ -6,6 +6,7 @@ from sklearn.ensemble import RandomForestClassifier
 from posture_monitor.inference.realtime import run
 from posture_monitor.inference.realtime import _status_text_and_color
 from posture_monitor.inference.realtime import _draw_skeleton
+from posture_monitor.inference.realtime import _apply_angle_tolerance
 
 
 def _train_tiny_always_correct_model(tmp_path):
@@ -92,3 +93,28 @@ def test_draw_skeleton_draws_a_dot_at_each_keypoint_location():
     _draw_skeleton(frame, keypoints)
     x, y, _ = keypoints["nose"]
     assert frame[int(y), int(x)].any()
+
+
+def _make_raw(torso=0.0, neck=0.0):
+    return {"torso_angle_deg": torso, "neck_angle_deg": neck}
+
+
+def test_angle_tolerance_overrides_lean_forward_within_tolerance():
+    raw = _make_raw(torso=5.0, neck=-3.0)
+    assert _apply_angle_tolerance(raw, "LeanForward") == "CorrectSitting"
+
+
+def test_angle_tolerance_overrides_lean_backward_within_tolerance():
+    raw = _make_raw(torso=-6.0, neck=4.0)
+    assert _apply_angle_tolerance(raw, "LeanBackward") == "CorrectSitting"
+
+
+def test_angle_tolerance_does_not_override_large_lean():
+    raw = _make_raw(torso=25.0, neck=10.0)
+    assert _apply_angle_tolerance(raw, "LeanForward") == "LeanForward"
+
+
+def test_angle_tolerance_does_not_affect_leg_twisting_or_pose_uncertain():
+    raw = _make_raw(torso=0.0, neck=0.0)
+    assert _apply_angle_tolerance(raw, "LegTwisting") == "LegTwisting"
+    assert _apply_angle_tolerance(raw, "PoseUncertain") == "PoseUncertain"

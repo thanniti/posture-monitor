@@ -7,6 +7,7 @@ import mediapipe as mp
 from posture_monitor.calibration.calibrate import compute_scale_reference, feature_vector, normalize_features
 from posture_monitor.config import (
     CALIBRATION_SECONDS,
+    CORRECT_SITTING_ANGLE_TOLERANCE_DEG,
     DEBOUNCE_SECONDS,
     MIN_MEAN_VISIBILITY,
     POSE_MODEL_PATH,
@@ -39,6 +40,21 @@ def _draw_skeleton(frame_bgr, keypoints):
         cv2.line(frame_bgr, (int(xa), int(ya)), (int(xb), int(yb)), (0, 255, 255), 2)
     for x, y, _ in keypoints.values():
         cv2.circle(frame_bgr, (int(x), int(y)), 5, (255, 255, 255), -1)
+
+
+def _apply_angle_tolerance(raw, predicted_label):
+    """If the model predicted a lean (forward or backward) but both torso and
+    neck angles are within CORRECT_SITTING_ANGLE_TOLERANCE_DEG of vertical,
+    override to CorrectSitting. Does not affect LegTwisting or PoseUncertain —
+    this tolerance is specifically about trunk-lean sensitivity, not leg
+    position or pose-tracking confidence."""
+    if predicted_label not in ("LeanForward", "LeanBackward"):
+        return predicted_label
+    within_tolerance = (
+        abs(raw["torso_angle_deg"]) <= CORRECT_SITTING_ANGLE_TOLERANCE_DEG
+        and abs(raw["neck_angle_deg"]) <= CORRECT_SITTING_ANGLE_TOLERANCE_DEG
+    )
+    return "CorrectSitting" if within_tolerance else predicted_label
 
 
 def _status_text_and_color(keypoints_detected, calibrating, remaining_calibration_seconds, label):
@@ -108,6 +124,7 @@ def run(frame_source, model_bundle_path, on_flag=print, show_preview=False):
             else:
                 normalized = normalize_features(raw, scale_reference)
                 label = model.predict([feature_vector(normalized)])[0]
+                label = _apply_angle_tolerance(raw, label)
 
             smoothed, flagged = state.update(timestamp, label)
 
