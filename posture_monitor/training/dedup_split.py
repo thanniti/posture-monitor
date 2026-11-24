@@ -1,6 +1,6 @@
 import math
 
-DEDUP_FEATURES = ["neck_angle_deg", "torso_angle_deg", "hip_knee_angle_deg"]
+DEDUP_FEATURES = ["neck_angle_deg", "nose_shoulder_angle_deg"]
 
 
 def _angle_distance(row_a, row_b):

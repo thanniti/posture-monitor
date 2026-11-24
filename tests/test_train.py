@@ -15,18 +15,16 @@ def make_synthetic_csv(path):
         for i in range(count):
             cls = "CorrectSitting" if i % 2 == 0 else "LeanForward"
             neck = random.uniform(-2, 2) if cls == "CorrectSitting" else random.uniform(28, 32)
+            nose_shoulder = random.uniform(-2, 2) if cls == "CorrectSitting" else random.uniform(28, 32)
             rows.append({
                 "class": cls,
                 "honest_split": honest_split,
                 "neck_angle_deg": neck,
-                "torso_angle_deg": random.uniform(-2, 2),
+                "nose_shoulder_angle_deg": nose_shoulder,
                 "head_forward_offset_px": random.uniform(5, 10),
-                "hip_shoulder_vertical_px": random.uniform(85, 95),
-                "hip_knee_angle_deg": random.uniform(170, 180),
-                "leg_visibility": random.uniform(0.9, 1.0),
-                "shoulder_span_px": random.uniform(35, 45),
+                "nose_forward_offset_px": random.uniform(5, 10),
+                "nose_to_ear_px": random.uniform(95, 105),
                 "mean_visibility": random.uniform(0.9, 1.0),
-                "torso_length_px": random.uniform(95, 105),
             })
     pd.DataFrame(rows).to_csv(path, index=False)
 
@@ -41,6 +39,9 @@ def test_train_and_evaluate_produces_a_usable_model(tmp_path):
     assert model_path.exists()
     bundle = joblib.load(model_path)
     assert "model" in bundle and "scale_reference" in bundle and "feature_order" in bundle
-    # The two classes are trivially separable by neck_angle_deg, so accuracy should be high.
-    predictions = bundle["model"].predict([[0.0, 0.0, 0.08, 0.9, 175.0, 0.95, 0.4, 0.95]])
+    # The two classes are trivially separable by neck_angle_deg / nose_shoulder_angle_deg,
+    # so accuracy should be high. Vector order matches NORMALIZED_FEATURE_ORDER:
+    # neck_angle_deg, nose_shoulder_angle_deg, head_forward_offset_norm,
+    # nose_forward_offset_norm, mean_visibility.
+    predictions = bundle["model"].predict([[0.0, 0.0, 0.08, 0.08, 0.95]])
     assert predictions[0] == "CorrectSitting"

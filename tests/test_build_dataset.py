@@ -20,5 +20,9 @@ def test_build_feature_table_on_small_sample(tmp_path):
     assert output_csv.exists()
     assert len(rows) == 2 * 2 * len(CLASSES)  # 2 splits * 2 files * N classes
     first_row = rows[0]
-    for key in ("split", "class", "filename", "frame_index", "torso_length_px", "neck_angle_deg"):
+    for key in (
+        "split", "class", "filename", "frame_index",
+        "neck_angle_deg", "nose_shoulder_angle_deg", "head_forward_offset_px",
+        "nose_forward_offset_px", "nose_to_ear_px", "mean_visibility",
+    ):
         assert key in first_row

@@ -1,12 +1,11 @@
 from posture_monitor.training.dedup_split import deduplicate, honest_split, process_class_rows
 
 
-def make_row(frame_index, neck=0.0, torso=0.0, knee=180.0, **overrides):
+def make_row(frame_index, neck=0.0, nose_shoulder=0.0, **overrides):
     row = {
         "frame_index": frame_index,
         "neck_angle_deg": neck,
-        "torso_angle_deg": torso,
-        "hip_knee_angle_deg": knee,
+        "nose_shoulder_angle_deg": nose_shoulder,
     }
     row.update(overrides)
     return row

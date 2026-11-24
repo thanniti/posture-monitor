@@ -16,9 +16,10 @@ def _to_matrix(sub_df, scale_reference):
 
 def load_and_normalize(csv_path):
     df = pd.read_csv(csv_path)
+    df = df[df["class"] != "LegTwisting"]
     train_df = df[df.honest_split == "train"]
     test_df = df[df.honest_split == "test"]
-    scale_reference = train_df["torso_length_px"].median()
+    scale_reference = train_df["nose_to_ear_px"].median()
 
     X_train, y_train = _to_matrix(train_df, scale_reference)
     X_test, y_test = _to_matrix(test_df, scale_reference)
