@@ -3,7 +3,7 @@ import joblib
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 
-from posture_monitor.inference.realtime import run
+from posture_monitor.inference.realtime import run_front_view, run_side_view
 from posture_monitor.inference.realtime import _status_text_and_color
 from posture_monitor.inference.realtime import _draw_skeleton
 from posture_monitor.inference.realtime import _apply_angle_tolerance
@@ -33,7 +33,7 @@ def test_run_completes_calibration_and_emits_no_flags_for_correct_sitting(tmp_pa
     flags = []
 
     # 35 frames at 1s/frame covers the 30s calibration window plus 5s of live inference.
-    run(_fake_frame_source(35), model_path, on_flag=lambda ts, label: flags.append((ts, label)))
+    run_side_view(_fake_frame_source(35), model_path, on_flag=lambda ts, label: flags.append((ts, label)))
 
     assert flags == []
 
@@ -118,3 +118,17 @@ def test_angle_tolerance_does_not_affect_leg_twisting_or_pose_uncertain():
     raw = _make_raw(torso=0.0, neck=0.0)
     assert _apply_angle_tolerance(raw, "LegTwisting") == "LegTwisting"
     assert _apply_angle_tolerance(raw, "PoseUncertain") == "PoseUncertain"
+
+
+def test_run_front_view_completes_calibration_and_emits_no_flags_for_self_consistent_frame():
+    # Feeding the SAME real frame throughout both calibration and live phases
+    # means the computed baseline exactly matches that frame's own live features
+    # (zero deviation), so classify_frontal must always return CorrectSitting —
+    # this verifies the full real pose-estimation + calibration + rule-based
+    # classification + smoothing wiring end-to-end without needing a labeled
+    # frontal dataset (none exists yet).
+    flags = []
+
+    run_front_view(_fake_frame_source(35), on_flag=lambda ts, label: flags.append((ts, label)))
+
+    assert flags == []

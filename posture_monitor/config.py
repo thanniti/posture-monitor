@@ -59,3 +59,9 @@ FRONT_HIP_KNEE_ANGLE_TOLERANCE_DEG = 20.0
 # baseline before it's flagged as leg twisting (legs pulled up/occluded reduce
 # MediaPipe's visibility confidence for knee/ankle).
 FRONT_LEG_VISIBILITY_DROP_TOLERANCE = 0.3
+
+# Below this shoulder-width pixel distance, treat front-view detection as
+# unreliable (PoseUncertain) rather than running classify_frontal — guards
+# against division-by-near-zero in its neck-length/shoulder-width ratio when
+# MediaPipe detects the two shoulders implausibly close together.
+MIN_SHOULDER_WIDTH_PX = 20.0

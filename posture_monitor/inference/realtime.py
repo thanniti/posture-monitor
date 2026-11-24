@@ -10,11 +10,13 @@ from posture_monitor.config import (
     CORRECT_SITTING_ANGLE_TOLERANCE_DEG,
     DEBOUNCE_SECONDS,
     MIN_MEAN_VISIBILITY,
+    MIN_SHOULDER_WIDTH_PX,
     POSE_MODEL_PATH,
     SMOOTHING_WINDOW_SECONDS,
 )
-from posture_monitor.features.extraction import extract_features
+from posture_monitor.features.extraction import extract_features, extract_frontal_features
 from posture_monitor.features.landmarks import create_landmarker, extract_keypoints
+from posture_monitor.inference.frontal_classifier import classify_frontal, compute_frontal_baseline
 from posture_monitor.inference.smoothing import PostureMonitorState
 
 PREVIEW_WINDOW_NAME = "Posture Monitor"
@@ -81,7 +83,7 @@ def _render_preview(frame_bgr, text, color, keypoints=None):
     return key in (ord("q"), 27)
 
 
-def run(frame_source, model_bundle_path, on_flag=print, show_preview=False):
+def run_side_view(frame_source, model_bundle_path, on_flag=print, show_preview=False):
     bundle = joblib.load(model_bundle_path)
     model = bundle["model"]
     landmarker = create_landmarker(POSE_MODEL_PATH)
@@ -140,6 +142,89 @@ def run(frame_source, model_bundle_path, on_flag=print, show_preview=False):
             cv2.destroyAllWindows()
 
 
+def run_front_view(frame_source, on_flag=print, show_preview=False):
+    landmarker = create_landmarker(POSE_MODEL_PATH)
+    state = PostureMonitorState(SMOOTHING_WINDOW_SECONDS, DEBOUNCE_SECONDS)
+
+    calibration_rows = []
+    calibration_start = None
+    baseline = None
+
+    try:
+        for timestamp, frame_bgr in frame_source:
+            rgb_frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+            keypoints = extract_keypoints(landmarker, mp_image)
+
+            if keypoints is None:
+                if show_preview:
+                    text, color = _status_text_and_color(False, False, 0, None)
+                    if _render_preview(frame_bgr, text, color):
+                        break
+                continue
+
+            raw = extract_frontal_features(keypoints)
+            degenerate = (
+                raw["mean_visibility"] < MIN_MEAN_VISIBILITY
+                or raw["shoulder_width_px"] < MIN_SHOULDER_WIDTH_PX
+            )
+
+            if baseline is None:
+                if calibration_start is None:
+                    calibration_start = timestamp
+                if not degenerate:
+                    calibration_rows.append(raw)
+                remaining = max(0.0, CALIBRATION_SECONDS - (timestamp - calibration_start))
+                if show_preview:
+                    text, color = _status_text_and_color(True, True, remaining, None)
+                    if _render_preview(frame_bgr, text, color, keypoints):
+                        break
+                if timestamp - calibration_start >= CALIBRATION_SECONDS and calibration_rows:
+                    baseline = compute_frontal_baseline(calibration_rows)
+                continue
+
+            if degenerate:
+                label = "PoseUncertain"
+            else:
+                label = classify_frontal(raw, baseline)
+
+            smoothed, flagged = state.update(timestamp, label)
+
+            if show_preview:
+                text, color = _status_text_and_color(True, False, 0, smoothed)
+                if _render_preview(frame_bgr, text, color, keypoints):
+                    break
+
+            if flagged:
+                on_flag(timestamp, smoothed)
+    finally:
+        if show_preview:
+            cv2.destroyAllWindows()
+
+
+def select_view_mode(frame_source):
+    """Shows a selection prompt using live frames from frame_source until the
+    user presses 's'/'S' (side view) or 'f'/'F' (front view). Returns "side",
+    "front", or None (if the source runs out or the user quits). Advances
+    frame_source as a side effect — the caller should keep using the SAME
+    generator afterward so the chosen run_* function continues from here."""
+    for timestamp, frame_bgr in frame_source:
+        annotated = frame_bgr.copy()
+        cv2.putText(
+            annotated, "Press 'S' for Side View, 'F' for Front View",
+            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2,
+        )
+        cv2.imshow(PREVIEW_WINDOW_NAME, annotated)
+        key = cv2.waitKey(1) & 0xFF
+        if key in (ord("s"), ord("S")):
+            return "side"
+        if key in (ord("f"), ord("F")):
+            return "front"
+        if key in (ord("q"), 27):
+            return None
+    return None
+
+
 def webcam_frame_source(camera_index=0):
     cap = cv2.VideoCapture(camera_index)
     try:
@@ -152,10 +237,19 @@ def webcam_frame_source(camera_index=0):
         cap.release()
 
 
+def main(model_bundle_path):
+    frame_source = webcam_frame_source()
+    mode = select_view_mode(frame_source)
+    if mode == "side":
+        run_side_view(frame_source, model_bundle_path, show_preview=True)
+    elif mode == "front":
+        run_front_view(frame_source, show_preview=True)
+
+
 if __name__ == "__main__":
     import sys
     model_path = sys.argv[1] if len(sys.argv) > 1 else "posture_monitor/models/classifier.joblib"
     try:
-        run(webcam_frame_source(), model_path, show_preview=True)
+        main(model_path)
     except KeyboardInterrupt:
         print("\nStopped by user")
