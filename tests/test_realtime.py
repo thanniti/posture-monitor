@@ -6,12 +6,13 @@ from sklearn.ensemble import RandomForestClassifier
 
 import posture_monitor.inference.realtime as realtime_module
 from posture_monitor.inference.realtime import (
+    OrientationState,
     _apply_angle_tolerance,
     _classify_front_frame,
     _classify_side_frame,
     _draw_skeleton,
     _guided_calibration_text,
-    _infer_orientation,
+    _raw_orientation_reading,
     _status_text_and_color,
     _swap_forward_backward,
     run,
@@ -180,19 +181,60 @@ def test_guided_calibration_text_shows_countdown_when_matching():
     assert color == (255, 255, 0)
 
 
-# --- _infer_orientation ---
+# --- _raw_orientation_reading ---
 
-def test_infer_orientation_below_threshold_is_side():
-    assert _infer_orientation(0.5, current_mode="front") == "side"
-
-
-def test_infer_orientation_above_threshold_is_front():
-    assert _infer_orientation(2.0, current_mode="side") == "front"
+def test_raw_orientation_reading_below_threshold_is_side():
+    assert _raw_orientation_reading(0.5) == "side"
 
 
-def test_infer_orientation_ambiguous_zone_keeps_current_mode():
-    assert _infer_orientation(1.45, current_mode="side") == "side"
-    assert _infer_orientation(1.45, current_mode="front") == "front"
+def test_raw_orientation_reading_above_threshold_is_front():
+    assert _raw_orientation_reading(2.0) == "front"
+
+
+def test_raw_orientation_reading_ambiguous_zone_is_none():
+    assert _raw_orientation_reading(1.45) is None
+
+
+# --- OrientationState ---
+
+def test_orientation_state_starts_at_initial_mode():
+    state = OrientationState(window_seconds=1.5, initial_mode="side")
+    assert state.confirmed_mode == "side"
+
+
+def test_orientation_state_single_extreme_frame_does_not_flip_mode():
+    # Regression test for the LateralLean-in-side-view bug: one frame whose
+    # ratio crosses cleanly past FRONT_VIEW_RATIO_THRESHOLD (e.g. an extreme
+    # backward lean, not an actual turn to face the camera) must not flip the
+    # confirmed mode on its own -- it's outvoted by the still-recent "side"
+    # reading from the previous frame.
+    state = OrientationState(window_seconds=1.5, initial_mode="side")
+    state.update(0.0, 0.9)  # side
+    mode = state.update(1.0, 2.0)  # single extreme-lean frame reads "front"
+    assert mode == "side"
+
+
+def test_orientation_state_sustained_readings_do_flip_mode():
+    state = OrientationState(window_seconds=1.5, initial_mode="side")
+    state.update(0.0, 0.9)  # side
+    state.update(1.0, 2.0)  # front (outvoted, stays side)
+    mode = state.update(2.0, 2.0)  # second consecutive front reading wins
+    assert mode == "front"
+
+
+def test_orientation_state_ambiguous_readings_do_not_affect_mode():
+    state = OrientationState(window_seconds=1.5, initial_mode="side")
+    mode = state.update(0.0, 1.45)  # ambiguous, casts no vote
+    assert mode == "side"
+
+
+def test_orientation_state_old_readings_fall_out_of_window():
+    state = OrientationState(window_seconds=1.5, initial_mode="side")
+    state.update(0.0, 0.9)  # side
+    # Far enough in the future that the t=0 "side" reading has aged out of
+    # the window, so a single "front" reading now wins uncontested.
+    mode = state.update(10.0, 2.0)
+    assert mode == "front"
 
 
 # --- _classify_side_frame / _classify_front_frame (confidence propagation) ---

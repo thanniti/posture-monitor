@@ -94,3 +94,14 @@ MIN_INTEROCULAR_DISTANCE_PX = 8.0
 # on noisy single-frame readings.
 SIDE_VIEW_RATIO_THRESHOLD = 1.3
 FRONT_VIEW_RATIO_THRESHOLD = 1.6
+
+# A single frame whose ratio crosses cleanly past SIDE_VIEW_RATIO_THRESHOLD or
+# FRONT_VIEW_RATIO_THRESHOLD (e.g. during an extreme backward lean, not an
+# actual turn to face the camera) used to flip the live orientation
+# instantly, which then ran the WRONG classifier for that frame (e.g. the
+# front-view rule engine producing a nonsensical LateralLean label while the
+# subject was still sitting sideways). OrientationState (realtime.py) now
+# requires the majority of raw per-frame readings within this rolling window
+# to agree before the confirmed orientation actually switches, so one noisy
+# or momentarily-extreme frame can no longer flip the pipeline on its own.
+ORIENTATION_SMOOTHING_WINDOW_SECONDS = 1.5

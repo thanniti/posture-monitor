@@ -1,4 +1,5 @@
 import time
+from collections import deque
 
 import cv2
 import joblib
@@ -12,6 +13,7 @@ from posture_monitor.config import (
     FRONT_VIEW_RATIO_THRESHOLD,
     MIN_INTEROCULAR_DISTANCE_PX,
     MIN_MEAN_VISIBILITY,
+    ORIENTATION_SMOOTHING_WINDOW_SECONDS,
     POSE_MODEL_PATH,
     SIDE_VIEW_RATIO_THRESHOLD,
     SMOOTHING_WINDOW_SECONDS,
@@ -140,17 +142,47 @@ def _guided_calibration_text(expected_mode, matches, remaining_seconds):
     return f"Calibrating {expected_mode.capitalize()} view... {remaining_seconds:.0f}s", (255, 255, 0)
 
 
-def _infer_orientation(ratio, current_mode):
-    """Hysteresis-based orientation detection from the shoulder-width/nose-to-ear
-    ratio: below SIDE_VIEW_RATIO_THRESHOLD means profile/side view, above
-    FRONT_VIEW_RATIO_THRESHOLD means facing the camera; in between is ambiguous
-    and keeps whatever mode was already active, to avoid flickering between
-    modes on borderline or noisy frames."""
+def _raw_orientation_reading(ratio):
+    """Per-frame orientation reading from the shoulder-width/nose-to-ear ratio,
+    with no memory of prior frames: below SIDE_VIEW_RATIO_THRESHOLD means
+    profile/side view, above FRONT_VIEW_RATIO_THRESHOLD means facing the
+    camera, and the gap between the two thresholds is ambiguous (None)."""
     if ratio < SIDE_VIEW_RATIO_THRESHOLD:
         return "side"
     if ratio > FRONT_VIEW_RATIO_THRESHOLD:
         return "front"
-    return current_mode
+    return None
+
+
+class OrientationState:
+    """Tracks raw per-frame orientation readings over a rolling window and only
+    switches the confirmed mode once one orientation holds a strict majority
+    of that window's non-ambiguous readings. A single frame that happens to
+    cross cleanly past one of the ratio thresholds -- e.g. an extreme
+    backward lean that briefly inflates the ratio without the subject ever
+    turning to face the camera -- is outvoted by the recent readings still in
+    the window, so it can no longer instantly flip which classifier runs.
+    Ambiguous (None) readings cast no vote either way."""
+
+    def __init__(self, window_seconds, initial_mode="side"):
+        self.window_seconds = window_seconds
+        self.confirmed_mode = initial_mode
+        self._history = deque()  # (timestamp, reading)
+
+    def update(self, timestamp, ratio):
+        reading = _raw_orientation_reading(ratio)
+        self._history.append((timestamp, reading))
+        cutoff = timestamp - self.window_seconds
+        while self._history and self._history[0][0] < cutoff:
+            self._history.popleft()
+
+        side_votes = sum(1 for _, r in self._history if r == "side")
+        front_votes = sum(1 for _, r in self._history if r == "front")
+        if side_votes > front_votes:
+            self.confirmed_mode = "side"
+        elif front_votes > side_votes:
+            self.confirmed_mode = "front"
+        return self.confirmed_mode
 
 
 def _render_preview(frame_bgr, text, color, keypoints=None):
@@ -277,7 +309,7 @@ def run_front_view(frame_source, on_flag=print, show_preview=False):
 def run(frame_source, model_bundle_path, on_flag=print, show_preview=False):
     """Guided two-phase calibration (always side view first, then front view,
     CALIBRATION_SECONDS each), followed by automatic per-frame orientation
-    detection for live classification (see _infer_orientation). Each
+    detection for live classification (see OrientationState). Each
     calibration phase's countdown only advances while the user is actually
     detected in that phase's expected orientation -- otherwise it pauses and
     the preview prompts them to turn."""
@@ -288,7 +320,7 @@ def run(frame_source, model_bundle_path, on_flag=print, show_preview=False):
 
     scale_reference = None
     baseline = None
-    current_mode = "side"
+    orientation_state = OrientationState(ORIENTATION_SMOOTHING_WINDOW_SECONDS, initial_mode="side")
 
     side_calibration_rows = []
     front_calibration_rows = []
@@ -351,7 +383,7 @@ def run(frame_source, model_bundle_path, on_flag=print, show_preview=False):
                     phase_elapsed = 0.0
                 continue
 
-            current_mode = _infer_orientation(ratio, current_mode)
+            current_mode = orientation_state.update(timestamp, ratio)
 
             if current_mode == "side":
                 label, confidence = _classify_side_frame(raw_side, model, scale_reference)
