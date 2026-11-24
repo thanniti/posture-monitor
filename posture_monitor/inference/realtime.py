@@ -69,4 +69,7 @@ def webcam_frame_source(camera_index=0):
 if __name__ == "__main__":
     import sys
     model_path = sys.argv[1] if len(sys.argv) > 1 else "posture_monitor/models/classifier.joblib"
-    run(webcam_frame_source(), model_path)
+    try:
+        run(webcam_frame_source(), model_path)
+    except KeyboardInterrupt:
+        print("\nStopped by user")
