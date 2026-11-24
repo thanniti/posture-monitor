@@ -7,6 +7,7 @@ from posture_monitor.inference.realtime import run_front_view, run_side_view
 from posture_monitor.inference.realtime import _status_text_and_color
 from posture_monitor.inference.realtime import _draw_skeleton
 from posture_monitor.inference.realtime import _apply_angle_tolerance
+from posture_monitor.inference.realtime import _suppress_leg_twisting
 
 
 def _train_tiny_always_correct_model(tmp_path):
@@ -130,5 +131,35 @@ def test_run_front_view_completes_calibration_and_emits_no_flags_for_self_consis
     flags = []
 
     run_front_view(_fake_frame_source(35), on_flag=lambda ts, label: flags.append((ts, label)))
+
+    assert flags == []
+
+
+def test_suppress_leg_twisting_remaps_to_correct_sitting():
+    assert _suppress_leg_twisting("LegTwisting") == "CorrectSitting"
+
+
+def test_suppress_leg_twisting_leaves_other_labels_unchanged():
+    assert _suppress_leg_twisting("CorrectSitting") == "CorrectSitting"
+    assert _suppress_leg_twisting("LeanForward") == "LeanForward"
+    assert _suppress_leg_twisting("LeanBackward") == "LeanBackward"
+    assert _suppress_leg_twisting("Slouching") == "Slouching"
+    assert _suppress_leg_twisting("PoseUncertain") == "PoseUncertain"
+
+
+def test_run_side_view_never_emits_leg_twisting_label(tmp_path):
+    # Train a tiny model that always predicts LegTwisting, feed it through
+    # run_side_view, and confirm the suppression means it's never flagged as
+    # LegTwisting at the point flags are emitted (it gets treated as
+    # CorrectSitting instead, which never triggers a flag).
+    model = RandomForestClassifier(n_estimators=5, random_state=0)
+    X = [[0, 0, 0.1, 0.9, 175, 0.95, 0.4, 0.95]] * 4
+    y = ["LegTwisting"] * 4
+    model.fit(X, y)
+    model_path = tmp_path / "model.joblib"
+    joblib.dump({"model": model, "scale_reference": 100.0, "feature_order": None}, model_path)
+
+    flags = []
+    run_side_view(_fake_frame_source(35), str(model_path), on_flag=lambda ts, label: flags.append((ts, label)))
 
     assert flags == []

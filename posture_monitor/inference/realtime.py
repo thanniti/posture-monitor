@@ -59,6 +59,15 @@ def _apply_angle_tolerance(raw, predicted_label):
     return "CorrectSitting" if within_tolerance else predicted_label
 
 
+def _suppress_leg_twisting(label):
+    """LegTwisting detection was found unreliable (both the trained side-view
+    classifier and the rule-based front-view classifier can still internally
+    predict it) and is deliberately disabled without retraining — any
+    LegTwisting prediction is remapped to CorrectSitting so it's never shown
+    or flagged."""
+    return "CorrectSitting" if label == "LegTwisting" else label
+
+
 def _status_text_and_color(keypoints_detected, calibrating, remaining_calibration_seconds, label):
     """Pure decision logic for what the preview overlay should say, decoupled from
     any actual drawing/GUI calls so it can be unit tested without a display."""
@@ -127,6 +136,7 @@ def run_side_view(frame_source, model_bundle_path, on_flag=print, show_preview=F
                 normalized = normalize_features(raw, scale_reference)
                 label = model.predict([feature_vector(normalized)])[0]
                 label = _apply_angle_tolerance(raw, label)
+                label = _suppress_leg_twisting(label)
 
             smoothed, flagged = state.update(timestamp, label)
 
@@ -187,6 +197,7 @@ def run_front_view(frame_source, on_flag=print, show_preview=False):
                 label = "PoseUncertain"
             else:
                 label = classify_frontal(raw, baseline)
+                label = _suppress_leg_twisting(label)
 
             smoothed, flagged = state.update(timestamp, label)
 
