@@ -92,9 +92,12 @@ def test_swap_forward_backward_leaves_other_labels_unchanged():
 
 
 def test_classify_side_frame_applies_swap_before_reporting_label(monkeypatch):
-    # With SWAP_LEAN_FORWARD_BACKWARD True (the default), a model that
-    # confidently predicts LeanForward should be reported as LeanBackward --
-    # end-to-end through _classify_side_frame, not just the standalone helper.
+    # SWAP_LEAN_FORWARD_BACKWARD defaults to False (see config.py), so this
+    # exercises the swap mechanism explicitly: with it forced on, a model
+    # that confidently predicts LeanForward should be reported as
+    # LeanBackward -- end-to-end through _classify_side_frame, not just the
+    # standalone helper.
+    monkeypatch.setattr(realtime_module, "SWAP_LEAN_FORWARD_BACKWARD", True)
     model = RandomForestClassifier(n_estimators=5, random_state=0)
     X = [[30.0, 30.0, 0.3, 0.3, 0.95]] * 4
     y = ["LeanForward"] * 4
@@ -496,11 +499,13 @@ def test_run_side_view_never_displays_confidence_for_a_mismatched_raw_label(tmp_
     # The scripted model's classes_ are ["CorrectSitting", "LeanBackward",
     # "LeanForward"]; its raw (pre-swap) predictions are "LeanForward" (90%)
     # for the first two calls and "LeanBackward" (95%) for the last two.
-    # SWAP_LEAN_FORWARD_BACKWARD is True by default (see config.py), so
-    # _classify_side_frame swaps these: the displayed labels below are
-    # "LeanBackward"/"LeanForward", the inverse of the model's raw calls --
-    # confidence values are unaffected by the swap (it only renames the
-    # label, not the probability). Fed through the real run_side_view loop
+    # SWAP_LEAN_FORWARD_BACKWARD defaults to False (see config.py), but this
+    # test forces it True to exercise the swap path through the real
+    # run_side_view loop: _classify_side_frame swaps these, so the displayed
+    # labels below are "LeanBackward"/"LeanForward", the inverse of the
+    # model's raw calls -- confidence values are unaffected by the swap (it
+    # only renames the label, not the probability). Fed through the real
+    # run_side_view loop
     # (real calibration, real smoothing window of SMOOTHING_WINDOW_SECONDS=
     # 2.5s, real _apply_angle_tolerance, real _status_text_and_color). With
     # 1-second steps:
@@ -516,6 +521,7 @@ def test_run_side_view_never_displays_confidence_for_a_mismatched_raw_label(tmp_
     # high-confidence number lifted from the model's (post-swap) LeanForward
     # prediction, slapped onto a completely different displayed label. After
     # the fix, it must show no confidence number at all.
+    monkeypatch.setattr(realtime_module, "SWAP_LEAN_FORWARD_BACKWARD", True)
     neck_angle_deg = 30.0  # large enough that _apply_angle_tolerance never overrides LF/LB
     fixed_raw = {
         "neck_angle_deg": neck_angle_deg,

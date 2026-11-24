@@ -37,16 +37,20 @@ HONEST_SPLIT_TRAIN_FRACTION = 0.8
 # decrease it to make the classifier stricter.
 CORRECT_SITTING_ANGLE_TOLERANCE_DEG = 8.0
 
-# The trained side-view model consistently (every frame, not intermittently)
-# predicts LeanForward when the subject is actually leaning backward and vice
-# versa, for at least one real user's camera setup. This points to a sign/
-# orientation mismatch between how the training recording's camera was angled
-# relative to the subject and how a live user's camera is angled -- not a
-# model-confidence problem, since it's 100% consistent rather than occasional.
-# Rather than chase the exact camera-geometry cause, this swaps the two labels
-# post-prediction as a direct correction. Set to False if your setup doesn't
-# exhibit this (e.g. you match the original training camera orientation).
-SWAP_LEAN_FORWARD_BACKWARD = True
+# Was introduced as a blanket post-prediction label swap after one real user's
+# camera setup showed a 100%-consistent LeanForward/LeanBackward mix-up.
+# Turned back off: an experiment that mirrored real training features and
+# re-ran them through the trained model showed the model is NOT cleanly
+# mirror-equivariant (negating the signed angle features does not reliably
+# flip its prediction to the opposite label), so a blanket output-label swap
+# isn't a principled fix for that case -- it happened to help one earlier
+# session but is not reliable in general. The model also has substantial
+# inherent LeanForward/LeanBackward confusion independent of any mirroring
+# (each class's training clip has very high natural angle variance), which
+# this flag never addressed anyway. Leave this as the raw model's prediction
+# until a real fix (e.g. per-session calibration-time sign correction, or
+# more/varied training recordings per class) is implemented.
+SWAP_LEAN_FORWARD_BACKWARD = False
 
 # Front-view (facing-camera) detection tolerances — rule-based, not ML, since there
 # is no labeled front-view training data. Each compares a live frame's frontal
