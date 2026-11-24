@@ -66,19 +66,32 @@ def _classify_side_frame(raw, model, scale_reference):
     """Shared side-view classification logic: visibility check, ML prediction
     with confidence (the model's own probability for its predicted class),
     angle-tolerance override. Used by run_side_view and the unified run().
-    Note: if the angle-tolerance override changes the label, the reported
-    confidence still reflects the model's own probability for its ORIGINAL
-    predicted class -- there's no natural statistical meaning to "confidence
-    in an overridden label", so we report what the model actually computed."""
+    If the angle-tolerance override changes the label, confidence is reported
+    as None rather than the original (now-irrelevant) predicted class's
+    probability -- there's no honest confidence number to attach to a label
+    the model didn't actually predict for this frame."""
     if raw["mean_visibility"] < MIN_MEAN_VISIBILITY:
-        return "PoseUncertain", 0.0
+        return "PoseUncertain", None
     normalized = normalize_features(raw, scale_reference)
     proba = model.predict_proba([feature_vector(normalized)])[0]
     best_index = proba.argmax()
-    label = model.classes_[best_index]
+    predicted_label = model.classes_[best_index]
     confidence = round(float(proba[best_index]) * 100, 1)
-    label = _apply_angle_tolerance(raw, label)
+    label = _apply_angle_tolerance(raw, predicted_label)
+    if label != predicted_label:
+        return label, None
     return label, confidence
+
+
+def _is_frontal_degenerate(raw):
+    """True if front-view tracking is too unreliable to classify or calibrate
+    from this frame: low overall landmark visibility, or implausibly small
+    eye-to-eye distance (guards against division-by-near-zero in
+    classify_frontal's normalization math)."""
+    return (
+        raw["mean_visibility"] < MIN_MEAN_VISIBILITY
+        or raw["interocular_distance_px"] < MIN_INTEROCULAR_DISTANCE_PX
+    )
 
 
 def _classify_front_frame(raw, baseline):
@@ -86,12 +99,8 @@ def _classify_front_frame(raw, baseline):
     visibility or implausibly small interocular distance), then rule-based
     classification with confidence. Used by run_front_view and the unified
     run()."""
-    degenerate = (
-        raw["mean_visibility"] < MIN_MEAN_VISIBILITY
-        or raw["interocular_distance_px"] < MIN_INTEROCULAR_DISTANCE_PX
-    )
-    if degenerate:
-        return "PoseUncertain", 0.0
+    if _is_frontal_degenerate(raw):
+        return "PoseUncertain", None
     return classify_frontal(raw, baseline)
 
 
@@ -183,9 +192,10 @@ def run_side_view(frame_source, model_bundle_path, on_flag=print, show_preview=F
 
             label, confidence = _classify_side_frame(raw, model, scale_reference)
             smoothed, flagged = state.update(timestamp, label)
+            display_confidence = confidence if label == smoothed else None
 
             if show_preview:
-                text, color = _status_text_and_color(True, False, 0, smoothed, confidence=confidence)
+                text, color = _status_text_and_color(True, False, 0, smoothed, confidence=display_confidence)
                 if _render_preview(frame_bgr, text, color, keypoints):
                     break
 
@@ -218,10 +228,7 @@ def run_front_view(frame_source, on_flag=print, show_preview=False):
                 continue
 
             raw = extract_frontal_features(keypoints)
-            degenerate = (
-                raw["mean_visibility"] < MIN_MEAN_VISIBILITY
-                or raw["interocular_distance_px"] < MIN_INTEROCULAR_DISTANCE_PX
-            )
+            degenerate = _is_frontal_degenerate(raw)
 
             if baseline is None:
                 if calibration_start is None:
@@ -239,9 +246,10 @@ def run_front_view(frame_source, on_flag=print, show_preview=False):
 
             label, confidence = _classify_front_frame(raw, baseline)
             smoothed, flagged = state.update(timestamp, label)
+            display_confidence = confidence if label == smoothed else None
 
             if show_preview:
-                text, color = _status_text_and_color(True, False, 0, smoothed, confidence=confidence)
+                text, color = _status_text_and_color(True, False, 0, smoothed, confidence=display_confidence)
                 if _render_preview(frame_bgr, text, color, keypoints):
                     break
 
@@ -317,10 +325,7 @@ def run(frame_source, model_bundle_path, on_flag=print, show_preview=False):
                 matches = ratio > FRONT_VIEW_RATIO_THRESHOLD
                 if matches:
                     phase_elapsed += delta
-                    if (
-                        raw_front["mean_visibility"] >= MIN_MEAN_VISIBILITY
-                        and raw_front["interocular_distance_px"] >= MIN_INTEROCULAR_DISTANCE_PX
-                    ):
+                    if not _is_frontal_degenerate(raw_front):
                         front_calibration_rows.append(raw_front)
                 remaining = max(0.0, CALIBRATION_SECONDS - phase_elapsed)
                 if show_preview:
@@ -340,9 +345,10 @@ def run(frame_source, model_bundle_path, on_flag=print, show_preview=False):
                 label, confidence = _classify_front_frame(raw_front, baseline)
 
             smoothed, flagged = state.update(timestamp, label)
+            display_confidence = confidence if label == smoothed else None
 
             if show_preview:
-                text, color = _status_text_and_color(True, False, 0, smoothed, mode=current_mode, confidence=confidence)
+                text, color = _status_text_and_color(True, False, 0, smoothed, mode=current_mode, confidence=display_confidence)
                 if _render_preview(frame_bgr, text, color, keypoints):
                     break
 

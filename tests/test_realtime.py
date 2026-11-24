@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 from sklearn.ensemble import RandomForestClassifier
 
+import posture_monitor.inference.realtime as realtime_module
 from posture_monitor.inference.realtime import (
     _apply_angle_tolerance,
     _classify_front_frame,
@@ -180,7 +181,7 @@ def test_classify_side_frame_returns_label_and_confidence():
     assert 0.0 <= confidence <= 100.0
 
 
-def test_classify_side_frame_pose_uncertain_has_zero_confidence():
+def test_classify_side_frame_pose_uncertain_has_none_confidence():
     model = _train_tiny_model(["CorrectSitting"] * 4)
     raw = {
         "neck_angle_deg": 0.0, "nose_shoulder_angle_deg": 0.0,
@@ -189,7 +190,59 @@ def test_classify_side_frame_pose_uncertain_has_zero_confidence():
     }
     label, confidence = _classify_side_frame(raw, model, scale_reference=10.0)
     assert label == "PoseUncertain"
-    assert confidence == 0.0
+    assert confidence is None
+
+
+def test_classify_side_frame_returns_none_confidence_when_angle_tolerance_overrides():
+    # Model confidently predicts LeanForward, but the raw angles are within
+    # CORRECT_SITTING_ANGLE_TOLERANCE_DEG, so _apply_angle_tolerance overrides
+    # the label to CorrectSitting. Confidence must be None, not the model's
+    # (now irrelevant) LeanForward probability -- there's no honest number to
+    # attach to a label the model didn't actually predict.
+    model = RandomForestClassifier(n_estimators=5, random_state=0)
+    X = [[30.0, 30.0, 0.3, 0.3, 0.95]] * 4
+    y = ["LeanForward"] * 4
+    model.fit(X, y)
+    raw = {
+        "neck_angle_deg": 2.0, "nose_shoulder_angle_deg": 1.0,  # within tolerance
+        "head_forward_offset_px": 1.0, "nose_forward_offset_px": 1.0,
+        "mean_visibility": 0.95,
+    }
+    label, confidence = _classify_side_frame(raw, model, scale_reference=10.0)
+    assert label == "CorrectSitting"
+    assert confidence is None
+
+
+def test_classify_side_frame_confidence_matches_predicted_class_with_real_multiclass_proba():
+    # Train on a mix of 3 classes so predict_proba returns a genuine
+    # multi-class distribution, not a trivial [1.0] for one class -- this
+    # actually exercises the argmax/classes_ indexing logic meaningfully.
+    model = RandomForestClassifier(n_estimators=20, random_state=0)
+    X = (
+        [[0.0, 0.0, 0.08, 0.08, 0.95]] * 10
+        + [[30.0, 30.0, 0.3, 0.3, 0.95]] * 10
+        + [[-30.0, -30.0, 0.3, 0.3, 0.95]] * 10
+    )
+    y = ["CorrectSitting"] * 10 + ["LeanForward"] * 10 + ["LeanBackward"] * 10
+    model.fit(X, y)
+
+    # A clear, unambiguous CorrectSitting-like sample, with angles large enough
+    # that _apply_angle_tolerance won't be a factor (it only overrides
+    # LeanForward/LeanBackward predictions, and this sample should predict
+    # CorrectSitting directly).
+    raw = {
+        "neck_angle_deg": 0.0, "nose_shoulder_angle_deg": 0.0,
+        "head_forward_offset_px": 0.08, "nose_forward_offset_px": 0.08,
+        "mean_visibility": 0.95,
+    }
+    normalized_vector = [[0.0, 0.0, 0.08 / 10.0, 0.08 / 10.0, 0.95]]
+    expected_proba = model.predict_proba(normalized_vector)[0]
+    expected_label = model.classes_[expected_proba.argmax()]
+    expected_confidence = round(float(expected_proba.max()) * 100, 1)
+
+    label, confidence = _classify_side_frame(raw, model, scale_reference=10.0)
+    assert label == expected_label
+    assert confidence == pytest.approx(expected_confidence)
 
 
 def test_classify_front_frame_pose_uncertain_on_low_interocular_distance():
@@ -205,7 +258,7 @@ def test_classify_front_frame_pose_uncertain_on_low_interocular_distance():
     }
     label, confidence = _classify_front_frame(raw, baseline)
     assert label == "PoseUncertain"
-    assert confidence == 0.0
+    assert confidence is None
 
 
 def test_classify_front_frame_returns_classify_frontal_result_when_not_degenerate():
@@ -333,3 +386,103 @@ def test_run_guided_calibration_does_not_overcredit_elapsed_time_across_a_stall(
     flags = []
     run(frame_source_with_stall(), str(model_path), on_flag=lambda ts, label: flags.append((ts, label)))
     assert len(flags) > 0
+
+
+# --- Integration: displayed confidence is paired with the SMOOTHED label ---
+
+class _ScriptedSideModel:
+    """Test double for a side-view classifier whose predicted label/confidence
+    for each successive call is scripted in advance, independent of input
+    features. This lets us deterministically force a raw-label flip against
+    the smoothing window (SMOOTHING_WINDOW_SECONDS lag) without depending on
+    real model training or real pose geometry -- something a trained
+    RandomForestClassifier on fixed real-image features can't reliably give
+    us frame-by-frame control over."""
+
+    classes_ = np.array(["CorrectSitting", "LeanBackward", "LeanForward"])
+
+    def __init__(self, scripted_probas):
+        self._scripted_probas = scripted_probas
+        self._call_count = 0
+
+    def predict_proba(self, X):
+        proba = self._scripted_probas[self._call_count % len(self._scripted_probas)]
+        self._call_count += 1
+        return np.array([proba])
+
+
+def test_run_side_view_never_displays_confidence_for_a_mismatched_raw_label(tmp_path, monkeypatch):
+    # Regression test for Bug 1: confidence must be shown only when it was
+    # actually computed for the label being displayed (the smoothed label),
+    # not for whatever the model predicted on the current raw frame.
+    #
+    # Script: two confident "LeanForward" frames (90%) followed by two
+    # confident "LeanBackward" frames (95%), fed through the real
+    # run_side_view loop (real calibration, real smoothing window of
+    # SMOOTHING_WINDOW_SECONDS=2.5s, real _apply_angle_tolerance, real
+    # _status_text_and_color). With 1-second steps:
+    #   t=16 raw=LF  window=[LF]            -> smoothed=LF  (matches raw)
+    #   t=17 raw=LF  window=[LF,LF]          -> smoothed=LF  (matches raw)
+    #   t=18 raw=LB  window=[LF,LF,LB]       -> smoothed=LF  (MISMATCH: the
+    #        model's current-frame prediction is LeanBackward at 95%, but the
+    #        displayed label is still the majority-vote LeanForward -- this is
+    #        exactly the scenario from the bug report)
+    #   t=19 raw=LB  window=[LF,LB,LB]       -> smoothed=LB  (matches raw)
+    #
+    # Before the fix, the t=18 frame would display "LeanForward (95%)" -- a
+    # high-confidence number lifted from the model's LeanBackward prediction,
+    # slapped onto a completely different displayed label. After the fix, it
+    # must show no confidence number at all.
+    neck_angle_deg = 30.0  # large enough that _apply_angle_tolerance never overrides LF/LB
+    fixed_raw = {
+        "neck_angle_deg": neck_angle_deg,
+        "nose_shoulder_angle_deg": neck_angle_deg,
+        "head_forward_offset_px": 5.0,
+        "nose_forward_offset_px": 5.0,
+        "mean_visibility": 0.95,
+        "nose_to_ear_px": 50.0,
+    }
+    monkeypatch.setattr(realtime_module, "extract_features", lambda keypoints: dict(fixed_raw))
+    monkeypatch.setattr(realtime_module, "_render_preview", lambda *a, **kw: False)
+
+    calls = []
+    original_status_text_and_color = realtime_module._status_text_and_color
+
+    def spy_status_text_and_color(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original_status_text_and_color(*args, **kwargs)
+
+    monkeypatch.setattr(realtime_module, "_status_text_and_color", spy_status_text_and_color)
+
+    model = _ScriptedSideModel([
+        [0.05, 0.05, 0.90],   # LeanForward, 90%
+        [0.05, 0.05, 0.90],   # LeanForward, 90%
+        [0.025, 0.95, 0.025],  # LeanBackward, 95%
+        [0.025, 0.95, 0.025],  # LeanBackward, 95%
+    ])
+    model_path = tmp_path / "scripted_model.joblib"
+    joblib.dump({"model": model, "scale_reference": None, "feature_order": None}, model_path)
+
+    frame = cv2.imread("data/train/CorrectSitting/image_0.jpg")
+
+    def frame_source():
+        # CALIBRATION_SECONDS=15, 1s steps -> t=0..15 calibrates (16 frames),
+        # t=16..19 are the four scripted live-classification frames above.
+        for i in range(20):
+            yield float(i), frame
+
+    run_side_view(
+        frame_source(),
+        str(model_path),
+        on_flag=lambda ts, label: None,
+        show_preview=True,
+    )
+
+    live_calls = [(args, kwargs) for args, kwargs in calls if args[1] is False]
+    assert len(live_calls) == 4
+
+    displayed_labels = [args[3] for args, _ in live_calls]
+    displayed_confidences = [kwargs.get("confidence") for _, kwargs in live_calls]
+
+    assert displayed_labels == ["LeanForward", "LeanForward", "LeanForward", "LeanBackward"]
+    assert displayed_confidences == [90.0, 90.0, None, 95.0]
