@@ -185,3 +185,90 @@ posture-monitor/
 - The browser web app (webcam capture UI, alert UI, any backend serving).
 - Any deployment, accounts, or persistence beyond local model/files.
 - Formal cross-subject accuracy guarantees (flagged as a limitation, not solved here).
+
+## Results (first training run)
+
+Ran the full pipeline (Task 11, Steps 1-4) against the real dataset in `data/`.
+
+**Feature extraction.** `python3 -m posture_monitor.training.build_dataset` processed all
+2,706 images (train + test combined); MediaPipe failed to detect a pose on 57 of them
+(warned, not fatal), leaving **2,649 rows** in `posture_monitor/training/features.csv`.
+
+**De-duplication threshold tuning.** The design doc's original default,
+`DEDUP_ANGLE_DISTANCE_THRESHOLD = 2.0` (degrees, combined Euclidean distance across
+neck/torso/hip-knee angle), turned out to be far too tight for this data: it only dropped a
+handful of frames per class (e.g. `CorrectSitting: 649 raw -> 623 after dedup`). Measuring the
+actual consecutive-frame angle distance showed a median of ~14-30 degrees per class (real
+per-frame pose-estimation jitter, not literal duplicate video frames), so a 2.0-degree
+threshold was effectively a no-op. The threshold was raised to **65.0 degrees** after sweeping
+a range of candidate values — this was the one tunable parameter the task permitted adjusting,
+and the goal was removing near-duplicate frames while keeping genuinely distinct poses, not
+hitting an exact target count. Re-running de-duplication and the honest (chronological,
+80/20) split with the new threshold produced a dramatic collapse, consistent with the forensic
+finding that each class is one short continuous clip:
+
+```
+CorrectSitting: 649 raw -> 58 after dedup (46 train / 12 test)
+LeanBackward:   460 raw -> 139 after dedup (111 train / 28 test)
+LeanForward:    663 raw -> 85 after dedup (68 train / 17 test)
+LegTwisting:    877 raw -> 168 after dedup (134 train / 34 test)
+```
+
+Total honest-split dataset: 450 rows (359 train / 91 test), written to
+`posture_monitor/training/features_honest.csv`.
+
+**Training and evaluation.** `python3 -m posture_monitor.training.train` on the de-duplicated,
+honestly-split data:
+
+```
+random_forest: cv f1_macro = 0.797
+svm_rbf:       cv f1_macro = 0.573
+Selected model: random_forest
+```
+
+Held-out (honest-split) classification report:
+
+```
+                precision    recall  f1-score   support
+
+CorrectSitting       0.47      0.67      0.55        12
+  LeanBackward       0.62      0.36      0.45        28
+   LeanForward       0.62      0.59      0.61        17
+   LegTwisting       0.67      0.82      0.74        34
+
+      accuracy                           0.62        91
+     macro avg       0.60      0.61      0.59        91
+  weighted avg       0.62      0.62      0.60        91
+```
+
+Confusion matrix (row = true label, column = predicted label, class order
+CorrectSitting / LeanBackward / LeanForward / LegTwisting):
+
+```
+[[ 8  3  1  0]
+ [ 9 10  2  7]
+ [ 0  0 10  7]
+ [ 0  3  3 28]]
+```
+
+`posture_monitor/models/classifier.joblib` (random forest) was written and is the selected
+model.
+
+**Reading these numbers.** Cross-validated F1 (0.797) is noticeably higher than the honest
+held-out F1 (macro 0.59) — expected, since cross-validation here still folds over the same
+single clip's de-duplicated frames, while the held-out test split is the last chronological
+20% of each clip and is a harder, more realistic test of "different moment, same session."
+`LeanBackward` is the weakest class (recall 0.36), most often confused with `CorrectSitting`
+and `LegTwisting`; `LegTwisting` and `LeanForward` perform best, consistent with those classes
+having the most visually distinct geometry (leg/rotation signal, strong forward neck angle).
+
+**This is session-level validation, not cross-subject validation.** Per the "Known
+limitations" and "Training methodology" sections above, this entire run — feature extraction,
+de-duplication, split, training, and evaluation — uses data from a single subject's single
+recording session per class. The honest chronological split avoids testing on frames a
+fraction of a second from training frames, but it does not and cannot demonstrate
+generalization to a new sitting session, a new subject, different clothing/lighting, or a
+different camera setup. These numbers should be read as "does the geometric-feature pipeline
+separate these four postures within one person's one session" — not as a real-world accuracy
+estimate. The qualitative manual webcam test (Task 11 Step 5, run separately) and a future
+second recording session are the next steps toward answering the cross-subject question.

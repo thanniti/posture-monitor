@@ -15,7 +15,15 @@ DEBOUNCE_SECONDS = 5.0
 # Euclidean distance (in degrees, across neck/torso/knee angles) below which two
 # consecutive frames in the same class are treated as near-duplicates and the later
 # one is dropped during training-set de-duplication.
-DEDUP_ANGLE_DISTANCE_THRESHOLD = 2.0
+#
+# Tuned against the real dataset (Task 11): the original default of 2.0 was far too
+# tight. Real per-frame pose-estimation output has substantial frame-to-frame jitter
+# (median consecutive-frame angle distance was ~14-30 degrees depending on class), so
+# a 2.0-degree threshold dropped almost nothing (e.g. CorrectSitting only went from
+# 649 -> 623 raw frames). Raised to 65.0, which collapses each class's near-duplicate
+# frames by roughly 80-91% while still leaving enough distinct rows per class for a
+# meaningful honest train/test split.
+DEDUP_ANGLE_DISTANCE_THRESHOLD = 65.0
 
 # Fraction of each class's chronologically-sorted frames used for the honest
 # re-split's training portion (remainder becomes the held-out test portion).
