@@ -284,7 +284,7 @@ def run(frame_source, model_bundle_path, on_flag=print, show_preview=False):
             keypoints = extract_keypoints(landmarker, mp_image)
 
             if keypoints is None:
-                last_timestamp = timestamp
+                last_timestamp = None
                 if show_preview:
                     text, color = _status_text_and_color(False, False, 0, None)
                     if _render_preview(frame_bgr, text, color):
@@ -298,7 +298,7 @@ def run(frame_source, model_bundle_path, on_flag=print, show_preview=False):
                 if raw_side["torso_length_px"] > 0 else 0.0
             )
 
-            delta = (timestamp - last_timestamp) if last_timestamp is not None else 0.0
+            delta = max(0.0, timestamp - last_timestamp) if last_timestamp is not None else 0.0
             last_timestamp = timestamp
 
             if scale_reference is None:
