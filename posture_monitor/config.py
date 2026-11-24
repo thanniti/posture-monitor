@@ -39,36 +39,31 @@ CORRECT_SITTING_ANGLE_TOLERANCE_DEG = 8.0
 
 # Front-view (facing-camera) detection tolerances — rule-based, not ML, since there
 # is no labeled front-view training data. Each compares a live frame's frontal
-# feature against a personal baseline recorded during that session's calibration.
+# feature (normalized by interocular_distance_px, a stable facial dimension that
+# doesn't change with posture) against a personal baseline recorded during that
+# session's calibration.
 
-# Fraction the live neck-length/shoulder-width ratio can shrink below the
-# calibrated baseline ratio before it's flagged as slouching (facing the camera,
-# ducking your head down/forward shortens this ratio; dividing by shoulder width
-# cancels out the effect of being closer to or farther from the camera).
-# Lowered from an initial 0.25 (required near-horizontal leaning to trigger) to
-# make moderate slouching detectable. Decrease further for more sensitivity,
-# increase if normal posture shifts start triggering false positives.
+# Fraction the live nose-to-shoulder OR ear-to-shoulder vertical distance (each
+# normalized by interocular distance) can shrink below its calibrated baseline
+# ratio before it's flagged as slouching. Lowered from an initial 0.25 (required
+# near-horizontal leaning to trigger) to make moderate slouching detectable.
 FRONT_NECK_SHRINK_TOLERANCE = 0.12
 
-# Degrees the live head-shoulder angle can deviate from the calibrated baseline
-# before it's flagged as slouching. Lowered from an initial 10.0 for the same
-# sensitivity reason as FRONT_NECK_SHRINK_TOLERANCE above.
-FRONT_HEAD_ANGLE_TOLERANCE_DEG = 6.0
+# Fraction the live shoulder-width-to-interocular-distance ratio can shrink below
+# its calibrated baseline before it's flagged as slouching (shoulders rounding
+# forward/inward narrows their apparent width in a frontal view).
+FRONT_SHOULDER_PROTRACTION_TOLERANCE = 0.12
 
-# Degrees the live hip-knee-ankle angle can drop below the calibrated baseline
-# before it's flagged as leg twisting (a bent/crossed leg reduces this angle).
-FRONT_HIP_KNEE_ANGLE_TOLERANCE_DEG = 20.0
+# Degrees the live shoulder-tilt angle can deviate from its calibrated baseline
+# before it's flagged as LateralLean (leaning/tilting to one side), rather than
+# Slouching (which covers neck compression and shoulder protraction).
+FRONT_LATERAL_TILT_TOLERANCE_DEG = 6.0
 
-# How much the live leg-landmark visibility can drop below the calibrated
-# baseline before it's flagged as leg twisting (legs pulled up/occluded reduce
-# MediaPipe's visibility confidence for knee/ankle).
-FRONT_LEG_VISIBILITY_DROP_TOLERANCE = 0.3
-
-# Below this shoulder-width pixel distance, treat front-view detection as
-# unreliable (PoseUncertain) rather than running classify_frontal — guards
-# against division-by-near-zero in its neck-length/shoulder-width ratio when
-# MediaPipe detects the two shoulders implausibly close together.
-MIN_SHOULDER_WIDTH_PX = 20.0
+# Below this eye-to-eye pixel distance, treat front-view detection as unreliable
+# (PoseUncertain) rather than running classify_frontal — guards against
+# division-by-near-zero in its normalization math when MediaPipe detects the two
+# eyes implausibly close together.
+MIN_INTEROCULAR_DISTANCE_PX = 8.0
 
 # Orientation auto-detection: ratio of shoulder_span_px / torso_length_px (from the
 # side-view feature extraction, but meaningful regardless of which pipeline ends up

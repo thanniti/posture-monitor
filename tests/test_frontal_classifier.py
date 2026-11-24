@@ -1,59 +1,65 @@
 import pytest
 
-from posture_monitor.inference.frontal_classifier import compute_frontal_baseline, classify_frontal
+from posture_monitor.inference.frontal_classifier import classify_frontal, compute_frontal_baseline
 
 
-def make_frontal_row(neck_length=20.0, shoulder_width=100.0, head_angle=0.0, hip_knee=175.0, leg_vis=0.95):
+def make_frontal_row(nose_vert=20.0, ear_vert=15.0, shoulder_width=100.0, shoulder_tilt=0.0, interocular=40.0):
     return {
-        "neck_length_px": neck_length,
+        "nose_to_shoulder_vertical_px": nose_vert,
+        "ear_to_shoulder_vertical_px": ear_vert,
         "shoulder_width_px": shoulder_width,
-        "head_shoulder_angle_deg": head_angle,
-        "hip_knee_angle_deg": hip_knee,
-        "leg_visibility": leg_vis,
+        "shoulder_tilt_deg": shoulder_tilt,
+        "interocular_distance_px": interocular,
     }
 
 
 def test_compute_frontal_baseline_is_median_per_field():
-    rows = [
-        make_frontal_row(neck_length=18.0),
-        make_frontal_row(neck_length=20.0),
-        make_frontal_row(neck_length=22.0),
-    ]
+    rows = [make_frontal_row(nose_vert=v) for v in [18.0, 20.0, 22.0]]
     baseline = compute_frontal_baseline(rows)
-    assert baseline["neck_length_px"] == pytest.approx(20.0)
+    assert baseline["nose_to_shoulder_vertical_px"] == pytest.approx(20.0)
 
 
 def test_classify_frontal_matches_baseline_is_correct_sitting():
     baseline = compute_frontal_baseline([make_frontal_row()])
     live = make_frontal_row()
-    assert classify_frontal(live, baseline) == "CorrectSitting"
+    label, confidence = classify_frontal(live, baseline)
+    assert label == "CorrectSitting"
+    assert confidence == pytest.approx(100.0)
 
 
 def test_classify_frontal_shrunk_neck_is_slouching():
-    baseline = compute_frontal_baseline([make_frontal_row(neck_length=20.0, shoulder_width=100.0)])
-    live = make_frontal_row(neck_length=10.0, shoulder_width=100.0)
-    assert classify_frontal(live, baseline) == "Slouching"
+    baseline = compute_frontal_baseline([make_frontal_row(nose_vert=20.0, ear_vert=15.0, interocular=40.0)])
+    live = make_frontal_row(nose_vert=10.0, ear_vert=8.0, interocular=40.0)
+    label, confidence = classify_frontal(live, baseline)
+    assert label == "Slouching"
+    assert confidence > 50.0
 
 
 def test_classify_frontal_small_neck_change_stays_correct_sitting():
-    baseline = compute_frontal_baseline([make_frontal_row(neck_length=20.0, shoulder_width=100.0)])
-    live = make_frontal_row(neck_length=18.0, shoulder_width=100.0)
-    assert classify_frontal(live, baseline) == "CorrectSitting"
+    baseline = compute_frontal_baseline([make_frontal_row(nose_vert=20.0, interocular=40.0)])
+    live = make_frontal_row(nose_vert=19.0, interocular=40.0)
+    label, confidence = classify_frontal(live, baseline)
+    assert label == "CorrectSitting"
 
 
-def test_classify_frontal_large_head_angle_deviation_is_slouching():
-    baseline = compute_frontal_baseline([make_frontal_row(head_angle=0.0)])
-    live = make_frontal_row(head_angle=15.0)
-    assert classify_frontal(live, baseline) == "Slouching"
+def test_classify_frontal_narrowed_shoulders_is_slouching():
+    baseline = compute_frontal_baseline([make_frontal_row(shoulder_width=100.0, interocular=40.0)])
+    live = make_frontal_row(shoulder_width=70.0, interocular=40.0)
+    label, confidence = classify_frontal(live, baseline)
+    assert label == "Slouching"
 
 
-def test_classify_frontal_bent_knee_is_leg_twisting():
-    baseline = compute_frontal_baseline([make_frontal_row(hip_knee=175.0)])
-    live = make_frontal_row(hip_knee=140.0)
-    assert classify_frontal(live, baseline) == "LegTwisting"
+def test_classify_frontal_shoulder_tilt_is_lateral_lean():
+    baseline = compute_frontal_baseline([make_frontal_row(shoulder_tilt=0.0)])
+    live = make_frontal_row(shoulder_tilt=15.0)
+    label, confidence = classify_frontal(live, baseline)
+    assert label == "LateralLean"
 
 
-def test_classify_frontal_reduced_leg_visibility_is_leg_twisting():
-    baseline = compute_frontal_baseline([make_frontal_row(leg_vis=0.95)])
-    live = make_frontal_row(leg_vis=0.5)
-    assert classify_frontal(live, baseline) == "LegTwisting"
+def test_classify_frontal_confidence_is_higher_for_more_severe_deviation():
+    baseline = compute_frontal_baseline([make_frontal_row(nose_vert=20.0, interocular=40.0)])
+    mild = make_frontal_row(nose_vert=16.0, interocular=40.0)
+    severe = make_frontal_row(nose_vert=5.0, interocular=40.0)
+    _, mild_confidence = classify_frontal(mild, baseline)
+    _, severe_confidence = classify_frontal(severe, baseline)
+    assert severe_confidence > mild_confidence

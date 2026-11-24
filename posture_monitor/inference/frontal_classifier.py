@@ -1,18 +1,17 @@
 import statistics
 
 from posture_monitor.config import (
-    FRONT_HEAD_ANGLE_TOLERANCE_DEG,
-    FRONT_HIP_KNEE_ANGLE_TOLERANCE_DEG,
-    FRONT_LEG_VISIBILITY_DROP_TOLERANCE,
+    FRONT_LATERAL_TILT_TOLERANCE_DEG,
     FRONT_NECK_SHRINK_TOLERANCE,
+    FRONT_SHOULDER_PROTRACTION_TOLERANCE,
 )
 
 BASELINE_FIELDS = [
-    "neck_length_px",
+    "nose_to_shoulder_vertical_px",
+    "ear_to_shoulder_vertical_px",
     "shoulder_width_px",
-    "head_shoulder_angle_deg",
-    "hip_knee_angle_deg",
-    "leg_visibility",
+    "shoulder_tilt_deg",
+    "interocular_distance_px",
 ]
 
 
@@ -24,22 +23,52 @@ def compute_frontal_baseline(raw_feature_rows):
     }
 
 
+def _severity_to_confidence(ratio):
+    """Converts a deviation-to-tolerance ratio into a 0-100 display confidence.
+    Not a true statistical confidence (this is rule-based, not probabilistic) --
+    it's how far past (or below) the triggering threshold the strongest signal
+    is, scaled so 'right at the threshold' reads as 50%."""
+    if ratio >= 1.0:
+        return min(99.0, round(50 + 50 * (ratio - 1.0), 1))
+    return round((1.0 - ratio) * 100, 1)
+
+
 def classify_frontal(raw, baseline):
     """Rule-based front-view posture classification: compares live frontal
-    features against a personal baseline (from compute_frontal_baseline) with
-    fixed tolerance margins. Does not handle PoseUncertain — callers should check
-    mean_visibility themselves before calling this, same as the side-view path."""
-    baseline_neck_ratio = baseline["neck_length_px"] / baseline["shoulder_width_px"]
-    live_neck_ratio = raw["neck_length_px"] / raw["shoulder_width_px"]
-    neck_shrink_fraction = (baseline_neck_ratio - live_neck_ratio) / baseline_neck_ratio
-    head_angle_deviation = abs(raw["head_shoulder_angle_deg"] - baseline["head_shoulder_angle_deg"])
+    features against a personal baseline (from compute_frontal_baseline).
+    Normalizes the compression/protraction signals by interocular_distance_px
+    (a stable facial dimension, immune to shoulder rounding or camera
+    distance) instead of shoulder width, since shoulder width is now itself a
+    slouch signal (protraction), not a safe reference. Returns (label,
+    confidence) -- confidence is NOT a probability, see _severity_to_confidence.
+    Does not handle PoseUncertain -- callers should check mean_visibility and
+    interocular_distance_px themselves before calling this."""
+    live_interocular = raw["interocular_distance_px"]
+    baseline_interocular = baseline["interocular_distance_px"]
 
-    if neck_shrink_fraction > FRONT_NECK_SHRINK_TOLERANCE or head_angle_deviation > FRONT_HEAD_ANGLE_TOLERANCE_DEG:
-        return "Slouching"
+    live_nose_ratio = raw["nose_to_shoulder_vertical_px"] / live_interocular
+    baseline_nose_ratio = baseline["nose_to_shoulder_vertical_px"] / baseline_interocular
+    nose_shrink_fraction = (baseline_nose_ratio - live_nose_ratio) / baseline_nose_ratio
 
-    hip_knee_drop = baseline["hip_knee_angle_deg"] - raw["hip_knee_angle_deg"]
-    leg_visibility_drop = baseline["leg_visibility"] - raw["leg_visibility"]
-    if hip_knee_drop > FRONT_HIP_KNEE_ANGLE_TOLERANCE_DEG or leg_visibility_drop > FRONT_LEG_VISIBILITY_DROP_TOLERANCE:
-        return "LegTwisting"
+    live_ear_ratio = raw["ear_to_shoulder_vertical_px"] / live_interocular
+    baseline_ear_ratio = baseline["ear_to_shoulder_vertical_px"] / baseline_interocular
+    ear_shrink_fraction = (baseline_ear_ratio - live_ear_ratio) / baseline_ear_ratio
 
-    return "CorrectSitting"
+    live_shoulder_ratio = raw["shoulder_width_px"] / live_interocular
+    baseline_shoulder_ratio = baseline["shoulder_width_px"] / baseline_interocular
+    shoulder_shrink_fraction = (baseline_shoulder_ratio - live_shoulder_ratio) / baseline_shoulder_ratio
+
+    shoulder_tilt_deviation = abs(raw["shoulder_tilt_deg"] - baseline["shoulder_tilt_deg"])
+
+    neck_compression_ratio = max(nose_shrink_fraction, ear_shrink_fraction) / FRONT_NECK_SHRINK_TOLERANCE
+    protraction_ratio = shoulder_shrink_fraction / FRONT_SHOULDER_PROTRACTION_TOLERANCE
+    tilt_ratio = shoulder_tilt_deviation / FRONT_LATERAL_TILT_TOLERANCE_DEG
+
+    severity = max(neck_compression_ratio, protraction_ratio, tilt_ratio)
+    confidence = _severity_to_confidence(severity)
+
+    if severity < 1.0:
+        return "CorrectSitting", confidence
+    if tilt_ratio == severity:
+        return "LateralLean", confidence
+    return "Slouching", confidence
