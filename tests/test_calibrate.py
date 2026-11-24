@@ -62,3 +62,17 @@ def test_feature_vector_follows_declared_order():
 
     assert len(vector) == len(NORMALIZED_FEATURE_ORDER)
     assert vector == [normalized[name] for name in NORMALIZED_FEATURE_ORDER]
+
+
+def test_compute_scale_reference_raises_on_all_non_positive_rows():
+    rows = [make_raw(torso_length_px=0.0), make_raw(torso_length_px=-5.0)]
+    with pytest.raises(ValueError, match="compute_scale_reference: no rows with positive torso_length_px"):
+        compute_scale_reference(rows)
+
+
+def test_normalize_features_raises_on_non_positive_scale_reference():
+    raw = make_raw()
+    with pytest.raises(ValueError, match="normalize_features: scale_reference must be positive"):
+        normalize_features(raw, scale_reference=0)
+    with pytest.raises(ValueError, match="normalize_features: scale_reference must be positive"):
+        normalize_features(raw, scale_reference=-5.0)

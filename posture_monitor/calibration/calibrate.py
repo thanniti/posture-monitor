@@ -17,10 +17,15 @@ def compute_scale_reference(raw_feature_rows):
     window and for the training-set-wide reference (see docs/specs design doc for
     why we use a fixed median rather than per-frame self-normalization)."""
     lengths = [row["torso_length_px"] for row in raw_feature_rows if row["torso_length_px"] > 0]
+    if not lengths:
+        raise ValueError("compute_scale_reference: no rows with positive torso_length_px")
     return statistics.median(lengths)
 
 
 def normalize_features(raw, scale_reference):
+    """Normalize raw features by dividing distance features by scale_reference."""
+    if scale_reference <= 0:
+        raise ValueError(f"normalize_features: scale_reference must be positive, got {scale_reference}")
     return {
         "neck_angle_deg": raw["neck_angle_deg"],
         "torso_angle_deg": raw["torso_angle_deg"],
@@ -34,4 +39,5 @@ def normalize_features(raw, scale_reference):
 
 
 def feature_vector(normalized):
+    """Extract features in the declared order."""
     return [normalized[name] for name in NORMALIZED_FEATURE_ORDER]
