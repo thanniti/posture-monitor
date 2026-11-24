@@ -29,8 +29,8 @@ DEDUP_ANGLE_DISTANCE_THRESHOLD = 65.0
 # re-split's training portion (remainder becomes the held-out test portion).
 HONEST_SPLIT_TRAIN_FRACTION = 0.8
 
-# If the model predicts LeanForward/LeanBackward but both torso_angle_deg and
-# neck_angle_deg are within this many degrees of vertical, override to
+# If the model predicts LeanForward/LeanBackward but both neck_angle_deg and
+# nose_shoulder_angle_deg are within this many degrees of vertical, override to
 # CorrectSitting instead. Widens the "sitting correctly" margin since the trained
 # model's decision boundary (learned from a small CorrectSitting sample) can be
 # oversensitive to minor natural sway. Increase this value for a wider margin,
