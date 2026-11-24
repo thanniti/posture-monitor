@@ -13,6 +13,8 @@ FRAME_INDEX_RE = re.compile(r"image_(\d+)\.jpg")
 def build_feature_table(data_dir, output_csv):
     landmarker = create_landmarker(POSE_MODEL_PATH)
     rows = []
+    total_files = 0
+    skipped_no_pose = 0
 
     for split in ["train", "test"]:
         for cls in CLASSES:
@@ -23,8 +25,10 @@ def build_feature_table(data_dir, output_csv):
                 match = FRAME_INDEX_RE.match(img_path.name)
                 if not match:
                     continue
+                total_files += 1
                 keypoints = extract_keypoints_from_file(landmarker, str(img_path))
                 if keypoints is None:
+                    skipped_no_pose += 1
                     continue
                 features = extract_features(keypoints)
                 rows.append({
@@ -34,6 +38,9 @@ def build_feature_table(data_dir, output_csv):
                     "frame_index": int(match.group(1)),
                     **features,
                 })
+
+    if skipped_no_pose > 0:
+        print(f"Warning: {skipped_no_pose} of {total_files} images had no detected pose and were skipped")
 
     if rows:
         fieldnames = list(rows[0].keys())
