@@ -10,7 +10,7 @@ def test_extract_keypoints_from_real_sample_image():
 
     assert keypoints is not None
     expected_names = {
-        "nose", "left_ear", "right_ear", "left_shoulder", "right_shoulder",
+        "nose", "left_eye", "right_eye", "left_ear", "right_ear", "left_shoulder", "right_shoulder",
         "left_hip", "right_hip", "left_knee", "right_knee", "left_ankle", "right_ankle",
     }
     assert set(keypoints.keys()) == expected_names

@@ -3,6 +3,7 @@ from mediapipe.tasks.python import BaseOptions, vision
 
 LANDMARK_INDICES = {
     "nose": 0,
+    "left_eye": 2, "right_eye": 5,
     "left_ear": 7, "right_ear": 8,
     "left_shoulder": 11, "right_shoulder": 12,
     "left_hip": 23, "right_hip": 24,
