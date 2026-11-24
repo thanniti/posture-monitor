@@ -36,3 +36,26 @@ HONEST_SPLIT_TRAIN_FRACTION = 0.8
 # oversensitive to minor natural sway. Increase this value for a wider margin,
 # decrease it to make the classifier stricter.
 CORRECT_SITTING_ANGLE_TOLERANCE_DEG = 8.0
+
+# Front-view (facing-camera) detection tolerances — rule-based, not ML, since there
+# is no labeled front-view training data. Each compares a live frame's frontal
+# feature against a personal baseline recorded during that session's calibration.
+
+# Fraction the live neck-length/shoulder-width ratio can shrink below the
+# calibrated baseline ratio before it's flagged as slouching (facing the camera,
+# ducking your head down/forward shortens this ratio; dividing by shoulder width
+# cancels out the effect of being closer to or farther from the camera).
+FRONT_NECK_SHRINK_TOLERANCE = 0.25
+
+# Degrees the live head-shoulder angle can deviate from the calibrated baseline
+# before it's flagged as slouching.
+FRONT_HEAD_ANGLE_TOLERANCE_DEG = 10.0
+
+# Degrees the live hip-knee-ankle angle can drop below the calibrated baseline
+# before it's flagged as leg twisting (a bent/crossed leg reduces this angle).
+FRONT_HIP_KNEE_ANGLE_TOLERANCE_DEG = 20.0
+
+# How much the live leg-landmark visibility can drop below the calibrated
+# baseline before it's flagged as leg twisting (legs pulled up/occluded reduce
+# MediaPipe's visibility confidence for knee/ankle).
+FRONT_LEG_VISIBILITY_DROP_TOLERANCE = 0.3
