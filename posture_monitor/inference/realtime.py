@@ -18,6 +18,28 @@ from posture_monitor.inference.smoothing import PostureMonitorState
 
 PREVIEW_WINDOW_NAME = "Posture Monitor"
 
+SKELETON_CONNECTIONS = [
+    ("left_ear", "left_shoulder"), ("right_ear", "right_shoulder"),
+    ("left_shoulder", "right_shoulder"),
+    ("left_shoulder", "left_hip"), ("right_shoulder", "right_hip"),
+    ("left_hip", "right_hip"),
+    ("left_hip", "left_knee"), ("right_hip", "right_knee"),
+    ("left_knee", "left_ankle"), ("right_knee", "right_ankle"),
+]
+
+
+def _draw_skeleton(frame_bgr, keypoints):
+    """Draws lines between anatomically connected keypoints, then a dot at every
+    tracked keypoint (including nose, which has no line connection). Operates on
+    a plain numpy array via cv2 drawing calls only — no GUI/display needed, so
+    this is directly unit-testable."""
+    for name_a, name_b in SKELETON_CONNECTIONS:
+        xa, ya, _ = keypoints[name_a]
+        xb, yb, _ = keypoints[name_b]
+        cv2.line(frame_bgr, (int(xa), int(ya)), (int(xb), int(yb)), (0, 255, 255), 2)
+    for x, y, _ in keypoints.values():
+        cv2.circle(frame_bgr, (int(x), int(y)), 5, (255, 255, 255), -1)
+
 
 def _status_text_and_color(keypoints_detected, calibrating, remaining_calibration_seconds, label):
     """Pure decision logic for what the preview overlay should say, decoupled from
@@ -30,10 +52,13 @@ def _status_text_and_color(keypoints_detected, calibrating, remaining_calibratio
     return label, color
 
 
-def _render_preview(frame_bgr, text, color):
-    """Draws the status overlay and shows it in a window. Returns True if the user
-    pressed 'q' or Escape to request quitting."""
+def _render_preview(frame_bgr, text, color, keypoints=None):
+    """Draws the skeleton overlay (if keypoints given) and the status text, then
+    shows it in a window. Returns True if the user pressed 'q' or Escape to
+    request quitting."""
     annotated = frame_bgr.copy()
+    if keypoints is not None:
+        _draw_skeleton(annotated, keypoints)
     cv2.putText(annotated, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
     cv2.imshow(PREVIEW_WINDOW_NAME, annotated)
     key = cv2.waitKey(1) & 0xFF
@@ -72,7 +97,7 @@ def run(frame_source, model_bundle_path, on_flag=print, show_preview=False):
                 remaining = max(0.0, CALIBRATION_SECONDS - (timestamp - calibration_start))
                 if show_preview:
                     text, color = _status_text_and_color(True, True, remaining, None)
-                    if _render_preview(frame_bgr, text, color):
+                    if _render_preview(frame_bgr, text, color, keypoints):
                         break
                 if timestamp - calibration_start >= CALIBRATION_SECONDS:
                     scale_reference = compute_scale_reference(calibration_rows)
@@ -88,7 +113,7 @@ def run(frame_source, model_bundle_path, on_flag=print, show_preview=False):
 
             if show_preview:
                 text, color = _status_text_and_color(True, False, 0, smoothed)
-                if _render_preview(frame_bgr, text, color):
+                if _render_preview(frame_bgr, text, color, keypoints):
                     break
 
             if flagged:

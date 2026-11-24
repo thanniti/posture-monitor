@@ -1,9 +1,11 @@
 import cv2
 import joblib
+import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 
 from posture_monitor.inference.realtime import run
 from posture_monitor.inference.realtime import _status_text_and_color
+from posture_monitor.inference.realtime import _draw_skeleton
 
 
 def _train_tiny_always_correct_model(tmp_path):
@@ -65,3 +67,28 @@ def test_status_text_bad_posture_is_red():
     )
     assert text == "LeanForward"
     assert color == (0, 0, 255)
+
+
+def _make_test_keypoints():
+    return {
+        "nose": (50, 10, 1.0),
+        "left_ear": (40, 20, 1.0), "right_ear": (60, 20, 1.0),
+        "left_shoulder": (30, 50, 1.0), "right_shoulder": (70, 50, 1.0),
+        "left_hip": (35, 100, 1.0), "right_hip": (65, 100, 1.0),
+        "left_knee": (35, 150, 1.0), "right_knee": (65, 150, 1.0),
+        "left_ankle": (35, 200, 1.0), "right_ankle": (65, 200, 1.0),
+    }
+
+
+def test_draw_skeleton_draws_something_on_blank_frame():
+    frame = np.zeros((220, 100, 3), dtype=np.uint8)
+    _draw_skeleton(frame, _make_test_keypoints())
+    assert frame.any()
+
+
+def test_draw_skeleton_draws_a_dot_at_each_keypoint_location():
+    frame = np.zeros((220, 100, 3), dtype=np.uint8)
+    keypoints = _make_test_keypoints()
+    _draw_skeleton(frame, keypoints)
+    x, y, _ = keypoints["nose"]
+    assert frame[int(y), int(x)].any()
