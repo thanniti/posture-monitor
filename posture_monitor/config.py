@@ -4,7 +4,7 @@ POSE_MODEL_PATH = "assets/pose_landmarker_lite.task"
 MIN_MEAN_VISIBILITY = 0.5
 
 # Calibration window length at the start of a live session.
-CALIBRATION_SECONDS = 30
+CALIBRATION_SECONDS = 15
 
 # Rolling majority-vote window for smoothing per-frame predictions.
 SMOOTHING_WINDOW_SECONDS = 2.5
@@ -45,11 +45,15 @@ CORRECT_SITTING_ANGLE_TOLERANCE_DEG = 8.0
 # calibrated baseline ratio before it's flagged as slouching (facing the camera,
 # ducking your head down/forward shortens this ratio; dividing by shoulder width
 # cancels out the effect of being closer to or farther from the camera).
-FRONT_NECK_SHRINK_TOLERANCE = 0.25
+# Lowered from an initial 0.25 (required near-horizontal leaning to trigger) to
+# make moderate slouching detectable. Decrease further for more sensitivity,
+# increase if normal posture shifts start triggering false positives.
+FRONT_NECK_SHRINK_TOLERANCE = 0.12
 
 # Degrees the live head-shoulder angle can deviate from the calibrated baseline
-# before it's flagged as slouching.
-FRONT_HEAD_ANGLE_TOLERANCE_DEG = 10.0
+# before it's flagged as slouching. Lowered from an initial 10.0 for the same
+# sensitivity reason as FRONT_NECK_SHRINK_TOLERANCE above.
+FRONT_HEAD_ANGLE_TOLERANCE_DEG = 6.0
 
 # Degrees the live hip-knee-ankle angle can drop below the calibrated baseline
 # before it's flagged as leg twisting (a bent/crossed leg reduces this angle).
