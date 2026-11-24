@@ -9,9 +9,11 @@ from posture_monitor.config import (
     CALIBRATION_SECONDS,
     CORRECT_SITTING_ANGLE_TOLERANCE_DEG,
     DEBOUNCE_SECONDS,
+    FRONT_VIEW_RATIO_THRESHOLD,
     MIN_MEAN_VISIBILITY,
     MIN_SHOULDER_WIDTH_PX,
     POSE_MODEL_PATH,
+    SIDE_VIEW_RATIO_THRESHOLD,
     SMOOTHING_WINDOW_SECONDS,
 )
 from posture_monitor.features.extraction import extract_features, extract_frontal_features
@@ -68,15 +70,29 @@ def _suppress_leg_twisting(label):
     return "CorrectSitting" if label == "LegTwisting" else label
 
 
-def _status_text_and_color(keypoints_detected, calibrating, remaining_calibration_seconds, label):
+def _status_text_and_color(keypoints_detected, calibrating, remaining_calibration_seconds, label, mode=None):
     """Pure decision logic for what the preview overlay should say, decoupled from
     any actual drawing/GUI calls so it can be unit tested without a display."""
     if not keypoints_detected:
         return "No pose detected", (0, 0, 255)
     if calibrating:
         return f"Calibrating... {remaining_calibration_seconds:.0f}s", (255, 255, 0)
+    text = label if mode is None else f"[{mode.capitalize()}] {label}"
     color = (0, 255, 0) if label == "CorrectSitting" else (0, 0, 255)
-    return label, color
+    return text, color
+
+
+def _infer_orientation(ratio, current_mode):
+    """Hysteresis-based orientation detection from the shoulder-span/torso-length
+    ratio: below SIDE_VIEW_RATIO_THRESHOLD means profile/side view, above
+    FRONT_VIEW_RATIO_THRESHOLD means facing the camera; in between is ambiguous
+    and keeps whatever mode was already active, to avoid flickering between
+    modes on borderline or noisy frames."""
+    if ratio < SIDE_VIEW_RATIO_THRESHOLD:
+        return "side"
+    if ratio > FRONT_VIEW_RATIO_THRESHOLD:
+        return "front"
+    return current_mode
 
 
 def _render_preview(frame_bgr, text, color, keypoints=None):
@@ -213,27 +229,100 @@ def run_front_view(frame_source, on_flag=print, show_preview=False):
             cv2.destroyAllWindows()
 
 
-def select_view_mode(frame_source):
-    """Shows a selection prompt using live frames from frame_source until the
-    user presses 's'/'S' (side view) or 'f'/'F' (front view). Returns "side",
-    "front", or None (if the source runs out or the user quits). Advances
-    frame_source as a side effect — the caller should keep using the SAME
-    generator afterward so the chosen run_* function continues from here."""
-    for timestamp, frame_bgr in frame_source:
-        annotated = frame_bgr.copy()
-        cv2.putText(
-            annotated, "Press 'S' for Side View, 'F' for Front View",
-            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2,
-        )
-        cv2.imshow(PREVIEW_WINDOW_NAME, annotated)
-        key = cv2.waitKey(1) & 0xFF
-        if key in (ord("s"), ord("S")):
-            return "side"
-        if key in (ord("f"), ord("F")):
-            return "front"
-        if key in (ord("q"), 27):
-            return None
-    return None
+def run(frame_source, model_bundle_path, on_flag=print, show_preview=False):
+    """Automatically detects per-frame whether the subject is in side view or
+    front view (see _infer_orientation) and routes to the appropriate
+    classifier, with no manual mode selection needed. Both calibrations run
+    simultaneously during the same 30s window: side-view rows feed
+    compute_scale_reference, front-view rows feed compute_frontal_baseline,
+    each only from frames detected as that orientation at the time."""
+    bundle = joblib.load(model_bundle_path)
+    model = bundle["model"]
+    landmarker = create_landmarker(POSE_MODEL_PATH)
+    state = PostureMonitorState(SMOOTHING_WINDOW_SECONDS, DEBOUNCE_SECONDS)
+
+    side_calibration_rows = []
+    front_calibration_rows = []
+    calibration_start = None
+    scale_reference = None
+    baseline = None
+    current_mode = "side"
+
+    try:
+        for timestamp, frame_bgr in frame_source:
+            rgb_frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+            keypoints = extract_keypoints(landmarker, mp_image)
+
+            if keypoints is None:
+                if show_preview:
+                    text, color = _status_text_and_color(False, False, 0, None)
+                    if _render_preview(frame_bgr, text, color):
+                        break
+                continue
+
+            raw_side = extract_features(keypoints)
+            raw_front = extract_frontal_features(keypoints)
+
+            orientation_ratio = (
+                raw_side["shoulder_span_px"] / raw_side["torso_length_px"]
+                if raw_side["torso_length_px"] > 0 else 0.0
+            )
+            current_mode = _infer_orientation(orientation_ratio, current_mode)
+
+            if scale_reference is None or baseline is None:
+                if calibration_start is None:
+                    calibration_start = timestamp
+                if current_mode == "side" and raw_side["mean_visibility"] >= MIN_MEAN_VISIBILITY:
+                    side_calibration_rows.append(raw_side)
+                elif current_mode == "front" and (
+                    raw_front["mean_visibility"] >= MIN_MEAN_VISIBILITY
+                    and raw_front["shoulder_width_px"] >= MIN_SHOULDER_WIDTH_PX
+                ):
+                    front_calibration_rows.append(raw_front)
+                remaining = max(0.0, CALIBRATION_SECONDS - (timestamp - calibration_start))
+                if show_preview:
+                    text, color = _status_text_and_color(True, True, remaining, None)
+                    if _render_preview(frame_bgr, text, color, keypoints):
+                        break
+                if timestamp - calibration_start >= CALIBRATION_SECONDS:
+                    if scale_reference is None and side_calibration_rows:
+                        scale_reference = compute_scale_reference(side_calibration_rows)
+                    if baseline is None and front_calibration_rows:
+                        baseline = compute_frontal_baseline(front_calibration_rows)
+                continue
+
+            if current_mode == "side":
+                if raw_side["mean_visibility"] < MIN_MEAN_VISIBILITY:
+                    label = "PoseUncertain"
+                else:
+                    normalized = normalize_features(raw_side, scale_reference)
+                    label = model.predict([feature_vector(normalized)])[0]
+                    label = _apply_angle_tolerance(raw_side, label)
+                    label = _suppress_leg_twisting(label)
+            else:
+                degenerate = (
+                    raw_front["mean_visibility"] < MIN_MEAN_VISIBILITY
+                    or raw_front["shoulder_width_px"] < MIN_SHOULDER_WIDTH_PX
+                )
+                if degenerate:
+                    label = "PoseUncertain"
+                else:
+                    label = classify_frontal(raw_front, baseline)
+                    label = _suppress_leg_twisting(label)
+
+            smoothed, flagged = state.update(timestamp, label)
+
+            if show_preview:
+                text, color = _status_text_and_color(True, False, 0, smoothed, mode=current_mode)
+                if _render_preview(frame_bgr, text, color, keypoints):
+                    break
+
+            if flagged:
+                on_flag(timestamp, smoothed)
+    finally:
+        if show_preview:
+            cv2.destroyAllWindows()
 
 
 def webcam_frame_source(camera_index=0):
@@ -249,12 +338,7 @@ def webcam_frame_source(camera_index=0):
 
 
 def main(model_bundle_path):
-    frame_source = webcam_frame_source()
-    mode = select_view_mode(frame_source)
-    if mode == "side":
-        run_side_view(frame_source, model_bundle_path, show_preview=True)
-    elif mode == "front":
-        run_front_view(frame_source, show_preview=True)
+    run(webcam_frame_source(), model_bundle_path, show_preview=True)
 
 
 if __name__ == "__main__":

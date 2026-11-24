@@ -65,3 +65,15 @@ FRONT_LEG_VISIBILITY_DROP_TOLERANCE = 0.3
 # against division-by-near-zero in its neck-length/shoulder-width ratio when
 # MediaPipe detects the two shoulders implausibly close together.
 MIN_SHOULDER_WIDTH_PX = 20.0
+
+# Orientation auto-detection: ratio of shoulder_span_px / torso_length_px (from the
+# side-view feature extraction, but meaningful regardless of which pipeline ends up
+# classifying the frame). Calibrated from the real labeled dataset: true side-view
+# poses (CorrectSitting/LeanForward/LeanBackward) measured ~0.13-0.19 median ratio,
+# while a pose rotated partway toward the camera (the LegTwisting clip) measured
+# ~0.42 median. Below SIDE_VIEW_RATIO_THRESHOLD -> side view; above
+# FRONT_VIEW_RATIO_THRESHOLD -> front view; the gap in between is a deliberate
+# hysteresis band -- ambiguous/borderline frames keep whatever mode was already
+# active, instead of flickering between modes on noisy single-frame readings.
+SIDE_VIEW_RATIO_THRESHOLD = 0.25
+FRONT_VIEW_RATIO_THRESHOLD = 0.40

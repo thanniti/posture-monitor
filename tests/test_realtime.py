@@ -8,6 +8,7 @@ from posture_monitor.inference.realtime import _status_text_and_color
 from posture_monitor.inference.realtime import _draw_skeleton
 from posture_monitor.inference.realtime import _apply_angle_tolerance
 from posture_monitor.inference.realtime import _suppress_leg_twisting
+from posture_monitor.inference.realtime import _infer_orientation, run
 
 
 def _train_tiny_always_correct_model(tmp_path):
@@ -161,5 +162,40 @@ def test_run_side_view_never_emits_leg_twisting_label(tmp_path):
 
     flags = []
     run_side_view(_fake_frame_source(35), str(model_path), on_flag=lambda ts, label: flags.append((ts, label)))
+
+    assert flags == []
+
+
+def test_infer_orientation_below_threshold_is_side():
+    assert _infer_orientation(0.1, current_mode="front") == "side"
+
+
+def test_infer_orientation_above_threshold_is_front():
+    assert _infer_orientation(0.6, current_mode="side") == "front"
+
+
+def test_infer_orientation_ambiguous_zone_keeps_current_mode():
+    assert _infer_orientation(0.3, current_mode="side") == "side"
+    assert _infer_orientation(0.3, current_mode="front") == "front"
+
+
+def test_run_unified_locks_to_side_mode_and_emits_no_flags_for_correct_sitting(tmp_path):
+    # data/train/CorrectSitting/image_0.jpg measures shoulder_span/torso_length
+    # ratio ~0.3375 -- inside the ambiguous hysteresis band, not clearly below
+    # SIDE_VIEW_RATIO_THRESHOLD. So this test verifies the hysteresis default
+    # (current_mode starts as "side" and an ambiguous ratio keeps it there),
+    # not that the image is unambiguously classified as side view on its own.
+    import joblib
+    from sklearn.ensemble import RandomForestClassifier
+
+    model = RandomForestClassifier(n_estimators=5, random_state=0)
+    X = [[0, 0, 0.1, 0.9, 175, 0.95, 0.4, 0.95]] * 4
+    y = ["CorrectSitting"] * 4
+    model.fit(X, y)
+    model_path = tmp_path / "model.joblib"
+    joblib.dump({"model": model, "scale_reference": 100.0, "feature_order": None}, model_path)
+
+    flags = []
+    run(_fake_frame_source(35), str(model_path), on_flag=lambda ts, label: flags.append((ts, label)))
 
     assert flags == []
