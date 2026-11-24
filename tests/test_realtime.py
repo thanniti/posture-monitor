@@ -13,7 +13,6 @@ from posture_monitor.inference.realtime import (
     _guided_calibration_text,
     _infer_orientation,
     _status_text_and_color,
-    _swap_forward_backward,
     run,
     run_front_view,
     run_side_view,
@@ -72,40 +71,6 @@ def test_angle_tolerance_does_not_override_large_lean():
 def test_angle_tolerance_does_not_affect_pose_uncertain():
     raw = _make_raw(neck=0.0, nose_shoulder=0.0)
     assert _apply_angle_tolerance(raw, "PoseUncertain") == "PoseUncertain"
-
-
-# --- _swap_forward_backward ---
-
-def test_swap_forward_backward_swaps_lean_forward():
-    assert _swap_forward_backward("LeanForward") == "LeanBackward"
-
-
-def test_swap_forward_backward_swaps_lean_backward():
-    assert _swap_forward_backward("LeanBackward") == "LeanForward"
-
-
-def test_swap_forward_backward_leaves_other_labels_unchanged():
-    assert _swap_forward_backward("CorrectSitting") == "CorrectSitting"
-    assert _swap_forward_backward("PoseUncertain") == "PoseUncertain"
-    assert _swap_forward_backward("Slouching") == "Slouching"
-
-
-def test_classify_side_frame_applies_swap_before_reporting_label(monkeypatch):
-    # With SWAP_LEAN_FORWARD_BACKWARD True (the default), a model that
-    # confidently predicts LeanForward should be reported as LeanBackward --
-    # end-to-end through _classify_side_frame, not just the standalone helper.
-    model = RandomForestClassifier(n_estimators=5, random_state=0)
-    X = [[30.0, 30.0, 0.3, 0.3, 0.95]] * 4
-    y = ["LeanForward"] * 4
-    model.fit(X, y)
-    raw = {
-        "neck_angle_deg": 30.0, "nose_shoulder_angle_deg": 30.0,
-        "head_forward_offset_px": 3.0, "nose_forward_offset_px": 3.0,
-        "mean_visibility": 0.95,
-    }
-    label, confidence = _classify_side_frame(raw, model, scale_reference=10.0)
-    assert label == "LeanBackward"
-    assert confidence == pytest.approx(100.0)
 
 
 # --- _status_text_and_color ---
@@ -451,29 +416,23 @@ def test_run_side_view_never_displays_confidence_for_a_mismatched_raw_label(tmp_
     # actually computed for the label being displayed (the smoothed label),
     # not for whatever the model predicted on the current raw frame.
     #
-    # The scripted model's classes_ are ["CorrectSitting", "LeanBackward",
-    # "LeanForward"]; its raw (pre-swap) predictions are "LeanForward" (90%)
-    # for the first two calls and "LeanBackward" (95%) for the last two.
-    # SWAP_LEAN_FORWARD_BACKWARD is True by default (see config.py), so
-    # _classify_side_frame swaps these: the displayed labels below are
-    # "LeanBackward"/"LeanForward", the inverse of the model's raw calls --
-    # confidence values are unaffected by the swap (it only renames the
-    # label, not the probability). Fed through the real run_side_view loop
-    # (real calibration, real smoothing window of SMOOTHING_WINDOW_SECONDS=
-    # 2.5s, real _apply_angle_tolerance, real _status_text_and_color). With
-    # 1-second steps:
-    #   t=16 raw=LB  window=[LB]            -> smoothed=LB  (matches raw)
-    #   t=17 raw=LB  window=[LB,LB]          -> smoothed=LB  (matches raw)
-    #   t=18 raw=LF  window=[LB,LB,LF]       -> smoothed=LB  (MISMATCH: the
-    #        post-swap current-frame label is LeanForward at 95%, but the
-    #        displayed label is still the majority-vote LeanBackward -- this
-    #        is exactly the scenario from the bug report)
-    #   t=19 raw=LF  window=[LB,LF,LF]       -> smoothed=LF  (matches raw)
+    # Script: two confident "LeanForward" frames (90%) followed by two
+    # confident "LeanBackward" frames (95%), fed through the real
+    # run_side_view loop (real calibration, real smoothing window of
+    # SMOOTHING_WINDOW_SECONDS=2.5s, real _apply_angle_tolerance, real
+    # _status_text_and_color). With 1-second steps:
+    #   t=16 raw=LF  window=[LF]            -> smoothed=LF  (matches raw)
+    #   t=17 raw=LF  window=[LF,LF]          -> smoothed=LF  (matches raw)
+    #   t=18 raw=LB  window=[LF,LF,LB]       -> smoothed=LF  (MISMATCH: the
+    #        model's current-frame prediction is LeanBackward at 95%, but the
+    #        displayed label is still the majority-vote LeanForward -- this is
+    #        exactly the scenario from the bug report)
+    #   t=19 raw=LB  window=[LF,LB,LB]       -> smoothed=LB  (matches raw)
     #
-    # Before the fix, the t=18 frame would display "LeanBackward (95%)" -- a
-    # high-confidence number lifted from the model's (post-swap) LeanForward
-    # prediction, slapped onto a completely different displayed label. After
-    # the fix, it must show no confidence number at all.
+    # Before the fix, the t=18 frame would display "LeanForward (95%)" -- a
+    # high-confidence number lifted from the model's LeanBackward prediction,
+    # slapped onto a completely different displayed label. After the fix, it
+    # must show no confidence number at all.
     neck_angle_deg = 30.0  # large enough that _apply_angle_tolerance never overrides LF/LB
     fixed_raw = {
         "neck_angle_deg": neck_angle_deg,
@@ -525,5 +484,5 @@ def test_run_side_view_never_displays_confidence_for_a_mismatched_raw_label(tmp_
     displayed_labels = [args[3] for args, _ in live_calls]
     displayed_confidences = [kwargs.get("confidence") for _, kwargs in live_calls]
 
-    assert displayed_labels == ["LeanBackward", "LeanBackward", "LeanBackward", "LeanForward"]
+    assert displayed_labels == ["LeanForward", "LeanForward", "LeanForward", "LeanBackward"]
     assert displayed_confidences == [90.0, 90.0, None, 95.0]

@@ -19,6 +19,17 @@ def _pick_side(keypoints, part_name):
     return left if left[2] >= right[2] else right
 
 
+def _facing_sign(nose, ear):
+    """+1.0 if the nose sits in the +x direction from the chosen-side ear,
+    -1.0 if -x. The nose is always anatomically in front of the ear, toward
+    whichever way the subject is facing -- unlike lean direction, this
+    relationship doesn't flip with posture, so its sign reliably canonicalizes
+    which way the subject happens to be oriented relative to the camera
+    (an arbitrary confound on the lean-angle sign that varies by camera/desk
+    setup and doesn't generalize from one recording session to another)."""
+    return 1.0 if (nose[0] - ear[0]) >= 0 else -1.0
+
+
 def _midpoint(p1, p2):
     return ((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2, (p1[2] + p2[2]) / 2)
 
@@ -35,17 +46,21 @@ def extract_features(keypoints):
     """Side-view (profile) geometric features. Deliberately upper-body only
     (nose, ears, shoulders) -- no hip/knee/ankle reliance, per project
     requirements. nose_to_ear_px serves as the scale-normalization reference
-    (a stable facial dimension, clearly visible in profile, unaffected by
-    posture) in place of the old hip-based torso_length_px."""
+    (a stable facial dimension, clearly visible in profile and unaffected by
+    posture) in place of the old hip-based torso_length_px. neck_angle_deg
+    and nose_shoulder_angle_deg are corrected by _facing_sign so "positive"
+    consistently means the same physical lean direction regardless of which
+    way the subject happens to face relative to their camera."""
     nose = keypoints["nose"]
     ear = _pick_side(keypoints, "ear")
     shoulder = _pick_side(keypoints, "shoulder")
 
+    facing_sign = _facing_sign(nose, ear)
     visibilities = [nose[2], ear[2], shoulder[2]]
 
     return {
-        "neck_angle_deg": _angle_from_vertical(shoulder, ear),
-        "nose_shoulder_angle_deg": _angle_from_vertical(shoulder, nose),
+        "neck_angle_deg": facing_sign * _angle_from_vertical(shoulder, ear),
+        "nose_shoulder_angle_deg": facing_sign * _angle_from_vertical(shoulder, nose),
         "head_forward_offset_px": abs(ear[0] - shoulder[0]),
         "nose_forward_offset_px": abs(nose[0] - shoulder[0]),
         "nose_to_ear_px": _euclidean(nose, ear),

@@ -15,7 +15,6 @@ from posture_monitor.config import (
     POSE_MODEL_PATH,
     SIDE_VIEW_RATIO_THRESHOLD,
     SMOOTHING_WINDOW_SECONDS,
-    SWAP_LEAN_FORWARD_BACKWARD,
 )
 from posture_monitor.features.extraction import extract_features, extract_frontal_features
 from posture_monitor.features.landmarks import create_landmarker, extract_keypoints
@@ -63,25 +62,14 @@ def _apply_angle_tolerance(raw, predicted_label):
     return "CorrectSitting" if within_tolerance else predicted_label
 
 
-def _swap_forward_backward(label):
-    """Swaps LeanForward<->LeanBackward, leaving every other label unchanged.
-    See SWAP_LEAN_FORWARD_BACKWARD's config comment for why this exists."""
-    if label == "LeanForward":
-        return "LeanBackward"
-    if label == "LeanBackward":
-        return "LeanForward"
-    return label
-
-
 def _classify_side_frame(raw, model, scale_reference):
     """Shared side-view classification logic: visibility check, ML prediction
     with confidence (the model's own probability for its predicted class),
-    an optional forward/backward swap correction, angle-tolerance override.
-    Used by run_side_view and the unified run(). If the angle-tolerance
-    override changes the label, confidence is reported as None rather than
-    the original (now-irrelevant) predicted class's probability -- there's no
-    honest confidence number to attach to a label the model didn't actually
-    predict for this frame."""
+    angle-tolerance override. Used by run_side_view and the unified run().
+    If the angle-tolerance override changes the label, confidence is
+    reported as None rather than the original (now-irrelevant) predicted
+    class's probability -- there's no honest confidence number to attach to
+    a label the model didn't actually predict for this frame."""
     if raw["mean_visibility"] < MIN_MEAN_VISIBILITY:
         return "PoseUncertain", None
     normalized = normalize_features(raw, scale_reference)
@@ -89,8 +77,6 @@ def _classify_side_frame(raw, model, scale_reference):
     best_index = proba.argmax()
     predicted_label = model.classes_[best_index]
     confidence = round(float(proba[best_index]) * 100, 1)
-    if SWAP_LEAN_FORWARD_BACKWARD:
-        predicted_label = _swap_forward_backward(predicted_label)
     label = _apply_angle_tolerance(raw, predicted_label)
     if label != predicted_label:
         return label, None

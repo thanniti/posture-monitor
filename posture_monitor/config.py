@@ -37,17 +37,6 @@ HONEST_SPLIT_TRAIN_FRACTION = 0.8
 # decrease it to make the classifier stricter.
 CORRECT_SITTING_ANGLE_TOLERANCE_DEG = 8.0
 
-# The trained side-view model consistently (every frame, not intermittently)
-# predicts LeanForward when the subject is actually leaning backward and vice
-# versa, for at least one real user's camera setup. This points to a sign/
-# orientation mismatch between how the training recording's camera was angled
-# relative to the subject and how a live user's camera is angled -- not a
-# model-confidence problem, since it's 100% consistent rather than occasional.
-# Rather than chase the exact camera-geometry cause, this swaps the two labels
-# post-prediction as a direct correction. Set to False if your setup doesn't
-# exhibit this (e.g. you match the original training camera orientation).
-SWAP_LEAN_FORWARD_BACKWARD = True
-
 # Front-view (facing-camera) detection tolerances — rule-based, not ML, since there
 # is no labeled front-view training data. Each compares a live frame's frontal
 # feature (normalized by interocular_distance_px, a stable facial dimension that
