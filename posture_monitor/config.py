@@ -65,18 +65,21 @@ FRONT_LATERAL_TILT_TOLERANCE_DEG = 6.0
 # eyes implausibly close together.
 MIN_INTEROCULAR_DISTANCE_PX = 8.0
 
-# Orientation auto-detection: ratio of shoulder_span_px / torso_length_px (from the
-# side-view feature extraction, but meaningful regardless of which pipeline ends up
-# classifying the frame). Calibrated from the real labeled dataset: true side-view
-# poses (CorrectSitting/LeanForward/LeanBackward) measured ~0.13-0.19 median ratio.
-# There is no genuine front-facing capture in the dataset to calibrate the upper
-# threshold against directly, so FRONT_VIEW_RATIO_THRESHOLD is an extrapolated lower
-# bound based on the LegTwisting clip (a side-view-labeled clip where the subject was
-# rotated partway toward the camera, not a true frontal pose), which measured ~0.42
-# median -- a genuinely frontal pose should read well above this. Below
-# SIDE_VIEW_RATIO_THRESHOLD -> side view; above FRONT_VIEW_RATIO_THRESHOLD -> front
-# view; the gap in between is a deliberate hysteresis band -- ambiguous/borderline
-# frames keep whatever mode was already active, instead of flickering between modes
+# Orientation auto-detection: ratio of shoulder_width_px (front-view feature) to
+# nose_to_ear_px (side-view scale reference) -- both computed every frame
+# regardless of which pipeline ends up classifying it, and both upper-body-only.
+# Replaces the old shoulder_span_px/torso_length_px signal, which no longer
+# exists after the upper-body-only feature redesign. Empirically measured
+# against the real labeled dataset: true side-view poses
+# (CorrectSitting/LeanBackward/LeanForward) measured ~0.9-1.15 median ratio,
+# while a pose rotated partway toward the camera (the LegTwisting clip, not a
+# true frontal pose -- no genuine front-facing capture exists in the dataset)
+# measured ~1.89 median. Individual frames vary quite a bit (this is a noisy
+# per-frame signal, same as the original orientation signal before this
+# redesign), so these thresholds leave a wide hysteresis band rather than
+# sitting tight against the medians. Below SIDE_VIEW_RATIO_THRESHOLD -> side
+# view; above FRONT_VIEW_RATIO_THRESHOLD -> front view; the gap in between
+# keeps whatever mode was already active, instead of flickering between modes
 # on noisy single-frame readings.
-SIDE_VIEW_RATIO_THRESHOLD = 0.25
-FRONT_VIEW_RATIO_THRESHOLD = 0.40
+SIDE_VIEW_RATIO_THRESHOLD = 1.3
+FRONT_VIEW_RATIO_THRESHOLD = 1.6
