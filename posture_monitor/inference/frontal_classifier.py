@@ -30,7 +30,7 @@ def _severity_to_confidence(ratio):
     is, scaled so 'right at the threshold' reads as 50%."""
     if ratio >= 1.0:
         return min(99.0, round(50 + 50 * (ratio - 1.0), 1))
-    return round((1.0 - ratio) * 100, 1)
+    return min(100.0, round((1.0 - ratio) * 100, 1))
 
 
 def classify_frontal(raw, baseline):
@@ -64,11 +64,17 @@ def classify_frontal(raw, baseline):
     protraction_ratio = shoulder_shrink_fraction / FRONT_SHOULDER_PROTRACTION_TOLERANCE
     tilt_ratio = shoulder_tilt_deviation / FRONT_LATERAL_TILT_TOLERANCE_DEG
 
-    severity = max(neck_compression_ratio, protraction_ratio, tilt_ratio)
+    # Tracked by category (not a bare max() of all three) so the Slouching-vs-
+    # LateralLean decision never depends on floating-point equality between
+    # ratios computed via different formulas.
+    category_ratios = {
+        "Slouching": max(neck_compression_ratio, protraction_ratio),
+        "LateralLean": tilt_ratio,
+    }
+    label = max(category_ratios, key=category_ratios.get)
+    severity = category_ratios[label]
     confidence = _severity_to_confidence(severity)
 
     if severity < 1.0:
         return "CorrectSitting", confidence
-    if tilt_ratio == severity:
-        return "LateralLean", confidence
-    return "Slouching", confidence
+    return label, confidence
