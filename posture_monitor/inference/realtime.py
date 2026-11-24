@@ -70,6 +70,32 @@ def _suppress_leg_twisting(label):
     return "CorrectSitting" if label == "LegTwisting" else label
 
 
+def _classify_side_frame(raw, model, scale_reference):
+    """Shared side-view classification logic: visibility check, ML prediction,
+    angle-tolerance override, leg-twisting suppression. Used by run_side_view
+    and the unified run()."""
+    if raw["mean_visibility"] < MIN_MEAN_VISIBILITY:
+        return "PoseUncertain"
+    normalized = normalize_features(raw, scale_reference)
+    label = model.predict([feature_vector(normalized)])[0]
+    label = _apply_angle_tolerance(raw, label)
+    return _suppress_leg_twisting(label)
+
+
+def _classify_front_frame(raw, baseline):
+    """Shared front-view classification logic: degenerate-pose check,
+    rule-based classification, leg-twisting suppression. Used by
+    run_front_view and the unified run()."""
+    degenerate = (
+        raw["mean_visibility"] < MIN_MEAN_VISIBILITY
+        or raw["shoulder_width_px"] < MIN_SHOULDER_WIDTH_PX
+    )
+    if degenerate:
+        return "PoseUncertain"
+    label = classify_frontal(raw, baseline)
+    return _suppress_leg_twisting(label)
+
+
 def _status_text_and_color(keypoints_detected, calibrating, remaining_calibration_seconds, label, mode=None):
     """Pure decision logic for what the preview overlay should say, decoupled from
     any actual drawing/GUI calls so it can be unit tested without a display."""
@@ -146,13 +172,7 @@ def run_side_view(frame_source, model_bundle_path, on_flag=print, show_preview=F
                     scale_reference = compute_scale_reference(calibration_rows)
                 continue
 
-            if raw["mean_visibility"] < MIN_MEAN_VISIBILITY:
-                label = "PoseUncertain"
-            else:
-                normalized = normalize_features(raw, scale_reference)
-                label = model.predict([feature_vector(normalized)])[0]
-                label = _apply_angle_tolerance(raw, label)
-                label = _suppress_leg_twisting(label)
+            label = _classify_side_frame(raw, model, scale_reference)
 
             smoothed, flagged = state.update(timestamp, label)
 
@@ -209,11 +229,7 @@ def run_front_view(frame_source, on_flag=print, show_preview=False):
                     baseline = compute_frontal_baseline(calibration_rows)
                 continue
 
-            if degenerate:
-                label = "PoseUncertain"
-            else:
-                label = classify_frontal(raw, baseline)
-                label = _suppress_leg_twisting(label)
+            label = _classify_front_frame(raw, baseline)
 
             smoothed, flagged = state.update(timestamp, label)
 
@@ -232,10 +248,15 @@ def run_front_view(frame_source, on_flag=print, show_preview=False):
 def run(frame_source, model_bundle_path, on_flag=print, show_preview=False):
     """Automatically detects per-frame whether the subject is in side view or
     front view (see _infer_orientation) and routes to the appropriate
-    classifier, with no manual mode selection needed. Both calibrations run
-    simultaneously during the same 30s window: side-view rows feed
-    compute_scale_reference, front-view rows feed compute_frontal_baseline,
-    each only from frames detected as that orientation at the time."""
+    classifier, with no manual mode selection needed. Each orientation's
+    calibration (scale_reference for side, baseline for front) completes
+    independently based on that orientation's OWN accumulated exposure time —
+    a user who only ever shows one orientation calibrates and starts
+    classifying normally in ~30s, never blocked waiting on the other
+    orientation's data. If the mode later switches to an orientation that
+    hasn't calibrated yet, that orientation starts (or resumes) its own
+    calibration countdown while the other orientation's established
+    calibration is left untouched."""
     bundle = joblib.load(model_bundle_path)
     model = bundle["model"]
     landmarker = create_landmarker(POSE_MODEL_PATH)
@@ -243,7 +264,8 @@ def run(frame_source, model_bundle_path, on_flag=print, show_preview=False):
 
     side_calibration_rows = []
     front_calibration_rows = []
-    calibration_start = None
+    side_calibration_start = None
+    front_calibration_start = None
     scale_reference = None
     baseline = None
     current_mode = "side"
@@ -270,46 +292,41 @@ def run(frame_source, model_bundle_path, on_flag=print, show_preview=False):
             )
             current_mode = _infer_orientation(orientation_ratio, current_mode)
 
-            if scale_reference is None or baseline is None:
-                if calibration_start is None:
-                    calibration_start = timestamp
-                if current_mode == "side" and raw_side["mean_visibility"] >= MIN_MEAN_VISIBILITY:
+            if current_mode == "side" and scale_reference is None:
+                if side_calibration_start is None:
+                    side_calibration_start = timestamp
+                if raw_side["mean_visibility"] >= MIN_MEAN_VISIBILITY:
                     side_calibration_rows.append(raw_side)
-                elif current_mode == "front" and (
-                    raw_front["mean_visibility"] >= MIN_MEAN_VISIBILITY
-                    and raw_front["shoulder_width_px"] >= MIN_SHOULDER_WIDTH_PX
-                ):
-                    front_calibration_rows.append(raw_front)
-                remaining = max(0.0, CALIBRATION_SECONDS - (timestamp - calibration_start))
+                remaining = max(0.0, CALIBRATION_SECONDS - (timestamp - side_calibration_start))
                 if show_preview:
                     text, color = _status_text_and_color(True, True, remaining, None)
                     if _render_preview(frame_bgr, text, color, keypoints):
                         break
-                if timestamp - calibration_start >= CALIBRATION_SECONDS:
-                    if scale_reference is None and side_calibration_rows:
-                        scale_reference = compute_scale_reference(side_calibration_rows)
-                    if baseline is None and front_calibration_rows:
-                        baseline = compute_frontal_baseline(front_calibration_rows)
+                if timestamp - side_calibration_start >= CALIBRATION_SECONDS and side_calibration_rows:
+                    scale_reference = compute_scale_reference(side_calibration_rows)
+                continue
+
+            if current_mode == "front" and baseline is None:
+                if front_calibration_start is None:
+                    front_calibration_start = timestamp
+                if (
+                    raw_front["mean_visibility"] >= MIN_MEAN_VISIBILITY
+                    and raw_front["shoulder_width_px"] >= MIN_SHOULDER_WIDTH_PX
+                ):
+                    front_calibration_rows.append(raw_front)
+                remaining = max(0.0, CALIBRATION_SECONDS - (timestamp - front_calibration_start))
+                if show_preview:
+                    text, color = _status_text_and_color(True, True, remaining, None)
+                    if _render_preview(frame_bgr, text, color, keypoints):
+                        break
+                if timestamp - front_calibration_start >= CALIBRATION_SECONDS and front_calibration_rows:
+                    baseline = compute_frontal_baseline(front_calibration_rows)
                 continue
 
             if current_mode == "side":
-                if raw_side["mean_visibility"] < MIN_MEAN_VISIBILITY:
-                    label = "PoseUncertain"
-                else:
-                    normalized = normalize_features(raw_side, scale_reference)
-                    label = model.predict([feature_vector(normalized)])[0]
-                    label = _apply_angle_tolerance(raw_side, label)
-                    label = _suppress_leg_twisting(label)
+                label = _classify_side_frame(raw_side, model, scale_reference)
             else:
-                degenerate = (
-                    raw_front["mean_visibility"] < MIN_MEAN_VISIBILITY
-                    or raw_front["shoulder_width_px"] < MIN_SHOULDER_WIDTH_PX
-                )
-                if degenerate:
-                    label = "PoseUncertain"
-                else:
-                    label = classify_frontal(raw_front, baseline)
-                    label = _suppress_leg_twisting(label)
+                label = _classify_front_frame(raw_front, baseline)
 
             smoothed, flagged = state.update(timestamp, label)
 

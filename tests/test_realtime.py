@@ -199,3 +199,27 @@ def test_run_unified_locks_to_side_mode_and_emits_no_flags_for_correct_sitting(t
     run(_fake_frame_source(35), str(model_path), on_flag=lambda ts, label: flags.append((ts, label)))
 
     assert flags == []
+
+
+def test_run_unified_completes_side_only_calibration_and_classifies(tmp_path):
+    # Regression test: a session that only ever shows side view (no front-view
+    # exposure at all) must still complete calibration and begin classifying —
+    # NOT get stuck waiting forever for front-view calibration data that will
+    # never arrive. Uses a model that always predicts "LeanForward" (not
+    # CorrectSitting) so that flags being emitted proves classification
+    # actually started, unlike a CorrectSitting-always model which would
+    # trivially emit zero flags whether or not calibration ever completed.
+    import joblib
+    from sklearn.ensemble import RandomForestClassifier
+
+    model = RandomForestClassifier(n_estimators=5, random_state=0)
+    X = [[30, 30, 0.3, 0.9, 175, 0.95, 0.4, 0.95]] * 4
+    y = ["LeanForward"] * 4
+    model.fit(X, y)
+    model_path = tmp_path / "model.joblib"
+    joblib.dump({"model": model, "scale_reference": 100.0, "feature_order": None}, model_path)
+
+    flags = []
+    run(_fake_frame_source(40), str(model_path), on_flag=lambda ts, label: flags.append((ts, label)))
+
+    assert len(flags) > 0
