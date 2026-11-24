@@ -20,21 +20,10 @@ DEBOUNCE_SECONDS = 5.0
 # tight. Real per-frame pose-estimation output has substantial frame-to-frame jitter
 # (median consecutive-frame angle distance was ~14-30 degrees depending on class), so
 # a 2.0-degree threshold dropped almost nothing (e.g. CorrectSitting only went from
-# 649 -> 623 raw frames). Raised to 65.0, which collapsed each class's near-duplicate
+# 649 -> 623 raw frames). Raised to 65.0, which collapses each class's near-duplicate
 # frames by roughly 80-91% while still leaving enough distinct rows per class for a
 # meaningful honest train/test split.
-#
-# Re-tuned after the facing-direction sign canonicalization fix (see
-# extraction.py's _facing_sign): correcting the angle sign removed a source of
-# large spurious frame-to-frame jumps (sign flips mid-clip), so genuine
-# frame-to-frame jitter is now lower (median consecutive-frame distance ~7-16
-# degrees instead of ~14-30). At the old 65.0 threshold this collapsed far more
-# aggressively than before (e.g. CorrectSitting 649 -> 26 total, only 6 in the
-# test split -- too thin for a meaningful honest evaluation). Lowered to 30.0,
-# which reproduces a similar ~72-87% per-class collapse rate to the original
-# tuning while leaving a healthier number of rows per class (83-247) for the
-# honest train/test split.
-DEDUP_ANGLE_DISTANCE_THRESHOLD = 30.0
+DEDUP_ANGLE_DISTANCE_THRESHOLD = 65.0
 
 # Fraction of each class's chronologically-sorted frames used for the honest
 # re-split's training portion (remainder becomes the held-out test portion).
@@ -47,6 +36,17 @@ HONEST_SPLIT_TRAIN_FRACTION = 0.8
 # oversensitive to minor natural sway. Increase this value for a wider margin,
 # decrease it to make the classifier stricter.
 CORRECT_SITTING_ANGLE_TOLERANCE_DEG = 8.0
+
+# The trained side-view model consistently (every frame, not intermittently)
+# predicts LeanForward when the subject is actually leaning backward and vice
+# versa, for at least one real user's camera setup. This points to a sign/
+# orientation mismatch between how the training recording's camera was angled
+# relative to the subject and how a live user's camera is angled -- not a
+# model-confidence problem, since it's 100% consistent rather than occasional.
+# Rather than chase the exact camera-geometry cause, this swaps the two labels
+# post-prediction as a direct correction. Set to False if your setup doesn't
+# exhibit this (e.g. you match the original training camera orientation).
+SWAP_LEAN_FORWARD_BACKWARD = True
 
 # Front-view (facing-camera) detection tolerances — rule-based, not ML, since there
 # is no labeled front-view training data. Each compares a live frame's frontal

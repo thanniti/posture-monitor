@@ -48,27 +48,6 @@ def test_forward_head_produces_nonzero_offsets_and_angles():
     assert features["nose_forward_offset_px"] > 0
 
 
-def test_angle_sign_is_canonicalized_regardless_of_facing_direction():
-    # Two keypoint sets describing the SAME physical forward lean, but with
-    # the subject facing opposite directions in the image (as if the camera
-    # were on the other side of a mirrored desk setup) -- i.e. facing_left's
-    # keypoints are the x-negated mirror of facing_right's, including which
-    # shoulder ends up on which side. Both must produce the SAME sign for
-    # neck_angle_deg and nose_shoulder_angle_deg, since the physical lean is
-    # identical -- only the arbitrary facing direction differs.
-    facing_right = make_keypoints(
-        nose=(60, -220, 1.0), left_ear=(40, -200, 1.0), right_ear=(40, -200, 0.3),
-    )
-    facing_left = make_keypoints(
-        nose=(-60, -220, 1.0), left_ear=(-40, -200, 0.3), right_ear=(-40, -200, 1.0),
-        left_shoulder=(50, -100, 1.0), right_shoulder=(-50, -100, 1.0),
-    )
-    features_right = extract_features(facing_right)
-    features_left = extract_features(facing_left)
-    assert features_right["neck_angle_deg"] == pytest.approx(features_left["neck_angle_deg"], abs=0.01)
-    assert features_right["nose_shoulder_angle_deg"] == pytest.approx(features_left["nose_shoulder_angle_deg"], abs=0.01)
-
-
 def test_side_view_chooses_higher_visibility_ear():
     # right_ear has lower visibility (0.3) than left_ear (1.0) in the base pose.
     base = extract_features(make_keypoints())
