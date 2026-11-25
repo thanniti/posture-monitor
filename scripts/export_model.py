@@ -4,8 +4,6 @@ import sys
 
 import joblib
 
-from posture_monitor.calibration.calibrate import NORMALIZED_FEATURE_ORDER
-
 
 def _export_tree(tree):
     return {
@@ -28,7 +26,7 @@ def export_model(model_bundle_path, output_path):
         )
     payload = {
         "classes": list(model.classes_),
-        "featureOrder": NORMALIZED_FEATURE_ORDER,
+        "featureOrder": bundle["feature_order"],
         "scaleReference": bundle["scale_reference"],
         "trees": [_export_tree(estimator.tree_) for estimator in model.estimators_],
     }
