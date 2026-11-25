@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# downloaded at build time (see scripts/download-model.sh); classifier.json stays committed
+public/models/pose_landmarker_lite.task
