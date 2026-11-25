@@ -2,6 +2,17 @@
 import { FilesetResolver, PoseLandmarker } from "@mediapipe/tasks-vision";
 import type { Keypoints } from "./features";
 
+// The WASM runtime must be the same version as the @mediapipe/tasks-vision JS
+// bindings imported above, or pose detection can silently misbehave.
+// NEXT_PUBLIC_MEDIAPIPE_TASKS_VISION_VERSION is set in next.config.ts from the
+// installed package's own package.json, so the CDN URL below can't silently
+// drift from whatever version npm actually resolved. The hardcoded fallback
+// is a last resort for environments where that env var somehow isn't inlined
+// (e.g. this module loaded outside of the Next.js build) and should match the
+// version pinned in package.json.
+const TASKS_VISION_VERSION =
+  process.env.NEXT_PUBLIC_MEDIAPIPE_TASKS_VISION_VERSION || "1.2.3";
+
 const LANDMARK_INDICES: Record<string, number> = {
   nose: 0,
   left_eye: 2, right_eye: 5,
@@ -14,7 +25,7 @@ const LANDMARK_INDICES: Record<string, number> = {
 
 export async function createLandmarker(modelAssetPath: string): Promise<PoseLandmarker> {
   const vision = await FilesetResolver.forVisionTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+    `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TASKS_VISION_VERSION}/wasm`
   );
   return PoseLandmarker.createFromOptions(vision, {
     baseOptions: { modelAssetPath },
