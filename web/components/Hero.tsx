@@ -2,7 +2,7 @@
 export default function Hero() {
   return (
     <section className="flex flex-col items-center gap-4 px-6 py-24 text-center">
-      <p className="text-xs font-semibold uppercase tracking-widest text-muted">PostureIQ</p>
+      <p className="text-xs font-semibold uppercase tracking-widest text-muted">Unslouch</p>
       <h1 className="max-w-2xl text-5xl font-semibold tracking-tight text-ink sm:text-6xl">
         Sit better. Feel better.
       </h1>
