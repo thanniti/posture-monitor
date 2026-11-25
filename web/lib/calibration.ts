@@ -38,5 +38,5 @@ export function normalizeFeatures(raw: SideFeatures, scaleReference: number): No
 }
 
 export function featureVector(normalized: NormalizedFeatures): number[] {
-  return NORMALIZED_FEATURE_ORDER.map((name) => (normalized as unknown as Record<string, number>)[name]);
+  return NORMALIZED_FEATURE_ORDER.map((name) => normalized[name]);
 }
