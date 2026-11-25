@@ -76,11 +76,13 @@ export default function TryItTool() {
       if (!landmarkerRef.current || !sessionRef.current) {
         let landmarker: PoseLandmarker | null = null;
         try {
-          const [createdLandmarker, model] = await Promise.all([
-            createLandmarker("/models/pose_landmarker_lite.task"),
-            loadModel("/models/classifier.json") as Promise<ForestModel>,
-          ]);
-          landmarker = createdLandmarker;
+          // Create the landmarker and load the model as two separate awaited
+          // steps (rather than Promise.all) so that if the landmarker
+          // succeeds but the model load fails, we still hold a direct
+          // reference to the landmarker and can close it in the catch below
+          // instead of leaking it.
+          landmarker = await createLandmarker("/models/pose_landmarker_lite.task");
+          const model = (await loadModel("/models/classifier.json")) as ForestModel;
 
           if (!isMountedRef.current) {
             try {
@@ -94,14 +96,17 @@ export default function TryItTool() {
           landmarkerRef.current = landmarker;
           sessionRef.current = new PostureSession(model);
         } catch {
+          // landmarker may have been created successfully even though this
+          // catch fired (e.g. createLandmarker resolved but loadModel
+          // rejected afterward). It was never stored into landmarkerRef, so
+          // it must be closed here regardless of mount state or it leaks.
+          try {
+            landmarker?.close();
+          } catch {
+            // ignore
+          }
           if (isMountedRef.current) {
             setToolState("load-error");
-          } else {
-            try {
-              landmarker?.close();
-            } catch {
-              // ignore
-            }
           }
           return;
         }
@@ -126,10 +131,18 @@ export default function TryItTool() {
           return;
         }
       } catch {
+        // Stop the stream's tracks regardless of mount state — e.g. if
+        // play() rejects (autoplay policy, detached element, etc.) after
+        // getUserMedia already granted a live camera stream, the tracks
+        // must still be stopped or the camera stays on indefinitely and a
+        // subsequent retry would overwrite srcObject with a new stream
+        // before this one is ever stopped.
+        stream?.getTracks().forEach((track) => track.stop());
+        if (videoRef.current && videoRef.current.srcObject === stream) {
+          videoRef.current.srcObject = null;
+        }
         if (isMountedRef.current) {
           setToolState("camera-error");
-        } else {
-          stream?.getTracks().forEach((track) => track.stop());
         }
         return;
       }
